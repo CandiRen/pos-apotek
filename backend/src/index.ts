@@ -226,22 +226,89 @@ app.get('/api/prescriptions/:id', authenticateToken, authorizeRoles(['admin', 'p
         });
     });
 });
-app.post('/api/prescriptions', authenticateToken, authorizeRoles(['admin', 'pharmacist']), (req: AuthRequest, res: Response) => {
-    const { patient_id, doctor_id, prescription_date, items } = req.body;
-    if (!items || !Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'Resep harus memiliki setidaknya satu item obat.' });
-    db.serialize(() => {
-        db.run('BEGIN TRANSACTION');
-        db.run(`INSERT INTO prescriptions (patient_id, doctor_id, prescription_date) VALUES (?,?,?)`, [patient_id, doctor_id, prescription_date], function(err) {
-            if (err) { db.run('ROLLBACK'); return res.status(500).json({ error: 'Gagal menyimpan resep.', details: err.message }); }
-            const prescriptionId = this.lastID;
-            const itemPromises = items.map((item: any) => new Promise<void>((resolve, reject) => {
-                db.run(`INSERT INTO prescription_items (prescription_id, product_id, quantity, dosage_instruction) VALUES (?,?,?,?)`, [prescriptionId, item.product_id, item.quantity, item.dosage_instruction], (err) => { if (err) return reject(err); resolve(); });
-            }));
-            Promise.all(itemPromises).then(() => { db.run('COMMIT'); res.status(201).json({ message: 'Resep berhasil disimpan', prescription_id: prescriptionId }); })
-            .catch(error => { db.run('ROLLBACK'); res.status(400).json({ error: 'Gagal menyimpan item resep.', details: error.message }); });
+
+// Helper function to find or create an entity
+const getOrCreateId = (table: string, entity: { id?: number, name: string }, extra_cols: any = {}) => {
+    return new Promise<number>((resolve, reject) => {
+        if (entity.id) return resolve(entity.id);
+        if (!entity.name || entity.name.trim() === '') return reject(new Error(`Nama entitas untuk tabel ${table} tidak boleh kosong.`));
+
+        db.get(`SELECT id FROM ${table} WHERE name = ?`, [entity.name], (err, row: any) => {
+            if (err) return reject(err);
+            if (row) return resolve(row.id);
+
+            const cols = ['name', ...Object.keys(extra_cols)];
+            const values = [entity.name, ...Object.values(extra_cols)];
+            const placeholders = cols.map(() => '?').join(',');
+
+            db.run(`INSERT INTO ${table} (${cols.join(',')}) VALUES (${placeholders})`, values, function(err) {
+                if (err) return reject(err);
+                resolve(this.lastID);
+            });
         });
     });
+};
+
+app.post('/api/prescriptions', authenticateToken, authorizeRoles(['admin', 'pharmacist']), async (req: AuthRequest, res: Response) => {
+    const { patient, doctor, prescription_date, items } = req.body;
+
+    if (!patient || !doctor || !items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: 'Data pasien, dokter, dan item resep harus lengkap.' });
+    }
+
+    try {
+        const patientId = await getOrCreateId('patients', patient);
+        const doctorId = await getOrCreateId('doctors', doctor);
+
+        const itemPromises = items.map(async (item: any) => {
+            const defaultProductData = {
+                price: 0,
+                stock_quantity: 0,
+                sku: item.product.name.replace(/\s+/g, '-').toUpperCase() + '-AUTO'
+            };
+            const productId = await getOrCreateId('products', item.product, defaultProductData);
+            return {
+                product_id: productId,
+                quantity: item.quantity,
+                dosage_instruction: item.dosage_instruction
+            };
+        });
+
+        const processedItems = await Promise.all(itemPromises);
+
+        db.serialize(() => {
+            db.run('BEGIN TRANSACTION');
+            db.run(`INSERT INTO prescriptions (patient_id, doctor_id, prescription_date) VALUES (?,?,?)`, [patientId, doctorId, prescription_date], function(err) {
+                if (err) {
+                    db.run('ROLLBACK');
+                    return res.status(500).json({ error: 'Gagal menyimpan resep.', details: err.message });
+                }
+                const prescriptionId = this.lastID;
+                const presItemPromises = processedItems.map(item => {
+                    return new Promise<void>((resolve, reject) => {
+                        db.run(`INSERT INTO prescription_items (prescription_id, product_id, quantity, dosage_instruction) VALUES (?,?,?,?)`, 
+                            [prescriptionId, item.product_id, item.quantity, item.dosage_instruction], 
+                            (err) => { if (err) return reject(err); resolve(); });
+                    });
+                });
+
+                Promise.all(presItemPromises)
+                    .then(() => { 
+                        db.run('COMMIT'); 
+                        res.status(201).json({ message: 'Resep berhasil disimpan', prescription_id: prescriptionId }); 
+                    })
+                    .catch(error => { 
+                        db.run('ROLLBACK'); 
+                        res.status(400).json({ error: 'Gagal menyimpan item resep.', details: error.message }); 
+                    });
+            });
+        });
+
+    } catch (error: any) {
+        res.status(500).json({ error: 'Terjadi kesalahan saat memproses resep.', details: error.message });
+    }
 });
+
 
 // === API LAPORAN ===
 app.get('/api/reports/summary', authenticateToken, authorizeRoles(['admin', 'pharmacist', 'cashier']), (req: AuthRequest, res: Response) => {
