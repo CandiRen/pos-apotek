@@ -1,0 +1,158 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap');
+
+* {
+  box-sizing: border-sizing; /* Penting untuk responsivitas */
+}
+
+:root {
+  --primary-color: #4a90e2; /* Biru tenang */
+  --secondary-color: #50e3c2; /* Hijau toska */
+  --accent-color: #f5a623; /* Oranye lembut */
+  --background-light: #f0f2f5; /* Abu-abu sangat terang, sedikit lebih gelap */
+  --background-dark: #2c3e50; /* Biru gelap untuk navbar */
+  --text-dark: #34495e;
+  --text-light: #ecf0f1;
+  --card-bg: #ffffff;
+  --border-color: #e0e0e0;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%; /* Pastikan lebar juga 100% */
+  margin: 0;
+  padding: 0;
+  /* overflow: hidden; -- Dihapus untuk menghindari masalah */
+}
+
+body {
+  font-family: 'Poppins', sans-serif;
+  background-color: var(--background-light);
+  color: var(--text-dark);
+}
+
+/* App Container untuk Flexbox Layout */
+.app-container {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh; /* Pastikan container utama mengambil tinggi penuh */
+    width: 100vw; /* Pastikan lebar penuh viewport */
+    background-color: var(--background-light);
+}
+
+/* Main Content Area */
+.main-content-area {
+    flex-grow: 1;
+    padding: 1.5rem; /* Tambahkan padding agar tidak terlalu mepet */
+    overflow-y: auto; /* Izinkan scroll jika konten melebihi tinggi */
+    width: 100%; /* Pastikan mengambil lebar penuh */
+}
+
+/* Override Bootstrap Navbar */
+.navbar.bg-dark {
+  background-color: var(--background-dark) !important;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  flex-shrink: 0; /* Pastikan navbar tidak menyusut */
+}
+.navbar-brand, .nav-link {
+  color: var(--text-light) !important;
+  transition: color 0.3s ease;
+}
+.navbar-brand:hover, .nav-link:hover {
+  color: var(--secondary-color) !important;
+}
+.nav-link.active {
+  color: var(--secondary-color) !important;
+  font-weight: 600;
+  border-bottom: 2px solid var(--secondary-color);
+  padding-bottom: 0.25rem;
+}
+
+/* Card Styling */
+.card {
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  background-color: var(--card-bg);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+}
+
+.card-header {
+  background-color: var(--card-bg);
+  border-bottom: 1px solid var(--border-color);
+  font-weight: 600;
+  color: var(--text-dark);
+  padding: 1rem 1.5rem;
+}
+
+.card-body {
+    padding: 1.5rem;
+}
+
+/* Custom Card Colors for Dashboard Summary */
+.card.bg-primary-custom {
+  background-color: var(--primary-color) !important;
+  color: var(--text-light) !important;
+}
+.card.bg-warning-custom {
+  background-color: var(--accent-color) !important;
+  color: var(--text-light) !important;
+}
+.card.bg-info-custom {
+  background-color: var(--secondary-color) !important;
+  color: var(--text-light) !important;
+}
+
+/* Buttons */
+.btn-primary {
+  background-color: var(--primary-color);
+  border-color: var(--primary-color);
+  transition: all 0.3s ease;
+}
+.btn-primary:hover {
+  background-color: #3a7bd5; /* Sedikit lebih gelap */
+  border-color: #3a7bd5;
+  transform: translateY(-1px);
+}
+.btn-success {
+  background-color: var(--secondary-color);
+  border-color: var(--secondary-color);
+  transition: all 0.3s ease;
+}
+.btn-success:hover {
+  background-color: #3dd1b0; /* Sedikit lebih gelap */
+  border-color: #3dd1b0;
+  transform: translateY(-1px);
+}
+.btn-danger {
+    transition: all 0.3s ease;
+}
+.btn-danger:hover {
+    transform: translateY(-1px);
+}
+
+/* Icons */
+.icon-large {
+    font-size: 3rem;
+    opacity: 0.6;
+}
+
+/* Loading Spinner */
+.spinner-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 200px;
+    flex-grow: 1; /* Agar spinner mengisi ruang */
+}
+
+/* Modal Responsiveness */
+@media (max-width: 767.98px) {
+    .modal-dialog.modal-xl, .modal-dialog.modal-lg {
+        max-width: 95vw; /* Lebih kecil di mobile */
+        margin: 0.5rem;
+    }
+}
