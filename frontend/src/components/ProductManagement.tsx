@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import type { FormEvent } from 'react';
+import type { FormEvent, ChangeEvent } from 'react';
 import { apiFetch } from '../api'; // Ganti import fetch standar
 
 const API_URL = 'http://localhost:3001/api';
@@ -28,12 +28,102 @@ const BLANK_PRODUCT: EditableProduct = {
   supplier: ''
 };
 
+const REQUIRED_HEADERS = ['name', 'sku', 'stock_quantity', 'price'];
+const OPTIONAL_HEADERS = ['category', 'expiry_date', 'supplier'];
+
+const parseCsvLine = (line: string) => {
+  const result: string[] = [];
+  let current = '';
+  let insideQuotes = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    if (char === '"') {
+      if (insideQuotes && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        insideQuotes = !insideQuotes;
+      }
+    } else if (char === ',' && !insideQuotes) {
+      result.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  result.push(current.trim());
+  return result;
+};
+
+const parseCsvText = (text: string) => {
+  const lines = text
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  if (lines.length <= 1) {
+    return { rows: [] as EditableProduct[], errors: ['File CSV harus memiliki header dan minimal satu data.'] };
+  }
+
+  const headerCells = parseCsvLine(lines[0]).map(header => header.toLowerCase());
+  const missingHeaders = REQUIRED_HEADERS.filter(header => !headerCells.includes(header));
+  if (missingHeaders.length > 0) {
+    return { rows: [] as EditableProduct[], errors: [`Kolom wajib berikut tidak ditemukan: ${missingHeaders.join(', ')}`] };
+  }
+
+  const validHeaders = [...REQUIRED_HEADERS, ...OPTIONAL_HEADERS];
+  const invalidHeaders = headerCells.filter(header => !validHeaders.includes(header));
+  if (invalidHeaders.length > 0) {
+    return { rows: [] as EditableProduct[], errors: [`Kolom tidak dikenal: ${invalidHeaders.join(', ')}`] };
+  }
+
+  const rows: EditableProduct[] = [];
+  const errors: string[] = [];
+
+  lines.slice(1).forEach((line, index) => {
+    const cells = parseCsvLine(line);
+    if (cells.length === 0) return;
+
+    const row: Record<string, string> = {};
+    headerCells.forEach((header, cellIndex) => {
+      row[header] = cells[cellIndex]?.trim() ?? '';
+    });
+
+    const rowNumber = index + 2; // +2 karena header adalah baris pertama
+    const stockQuantity = Number(row.stock_quantity);
+    const price = Number(row.price);
+
+    if (!row.name) errors.push(`Baris ${rowNumber}: kolom name wajib diisi.`);
+    if (!row.sku) errors.push(`Baris ${rowNumber}: kolom sku wajib diisi.`);
+    if (!Number.isFinite(stockQuantity)) errors.push(`Baris ${rowNumber}: kolom stock_quantity harus angka.`);
+    if (!Number.isFinite(price)) errors.push(`Baris ${rowNumber}: kolom price harus angka.`);
+
+    rows.push({
+      name: row.name,
+      sku: row.sku,
+      category: row.category || 'Obat Bebas',
+      stock_quantity: Number.isFinite(stockQuantity) ? Math.max(0, Math.round(stockQuantity)) : 0,
+      price: Number.isFinite(price) ? Math.max(0, price) : 0,
+      expiry_date: row.expiry_date || '',
+      supplier: row.supplier || ''
+    });
+  });
+
+  return { rows, errors };
+};
+
 export default function ProductManagement() {
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importRows, setImportRows] = useState<EditableProduct[]>([]);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
+  const [importSummary, setImportSummary] = useState<{ total: number; inserted: number; updated: number } | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
   
   const [formData, setFormData] = useState<EditableProduct>(BLANK_PRODUCT);
 
@@ -62,7 +152,7 @@ export default function ProductManagement() {
     };
   }, [searchTerm]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const handleInputChange = (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
   };
@@ -102,6 +192,64 @@ export default function ProductManagement() {
         .catch(err => console.error('Error deleting product:', err));
     }
   };
+
+  const handleOpenImport = () => {
+    setShowImportModal(true);
+    setImportRows([]);
+    setImportErrors([]);
+    setImportSummary(null);
+  };
+
+  const handleCloseImport = () => {
+    if (isUploading) return;
+    setShowImportModal(false);
+  };
+
+  const handleFileSelected = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      setImportRows([]);
+      setImportErrors([]);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result || '');
+      const { rows, errors } = parseCsvText(text);
+      setImportRows(rows);
+      setImportErrors(errors);
+      setImportSummary(null);
+    };
+    reader.onerror = () => {
+      setImportRows([]);
+      setImportErrors(['Gagal membaca file.']);
+    };
+    reader.readAsText(file, 'utf-8');
+  };
+
+  const handleUploadImport = () => {
+    if (importErrors.length > 0 || importRows.length === 0) return;
+    setIsUploading(true);
+    apiFetch(`${API_URL}/products/bulk`, {
+      method: 'POST',
+      body: JSON.stringify({ products: importRows })
+    })
+      .then(response => {
+        const summary = response.summary || { total: importRows.length, inserted: 0, updated: 0 };
+        setImportSummary(summary);
+        fetchProducts(searchTerm);
+      })
+      .catch(err => {
+        const message = err instanceof Error ? err.message : String(err);
+        setImportErrors([message]);
+      })
+      .finally(() => {
+        setIsUploading(false);
+      });
+  };
+
+  const previewRows = importRows.slice(0, 10);
   
   // ... (return JSX tetap sama)
   return (
@@ -167,14 +315,100 @@ export default function ProductManagement() {
         </div>
       )}
 
+      {showImportModal && (
+        <div className="modal show d-block" tabIndex={-1} style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-lg">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">Import Produk dari CSV</h5>
+                <button type="button" className="btn-close" onClick={handleCloseImport} disabled={isUploading}></button>
+              </div>
+              <div className="modal-body">
+                <p className="text-muted">Gunakan file CSV dengan header: <code>name, sku, category, stock_quantity, price, expiry_date, supplier</code>.</p>
+                <div className="mb-3">
+                  <label className="form-label">Pilih File CSV</label>
+                  <input type="file" className="form-control" accept=".csv" onChange={handleFileSelected} disabled={isUploading} />
+                </div>
+
+                {importErrors.length > 0 && (
+                  <div className="alert alert-danger" role="alert">
+                    <strong>Terjadi kesalahan:</strong>
+                    <ul className="mb-0">
+                      {importErrors.map((error, index) => (
+                        <li key={index}>{error}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {importSummary && (
+                  <div className="alert alert-success" role="alert">
+                    <p className="mb-0">Import selesai. Total {importSummary.total} baris diproses.</p>
+                    <p className="mb-0">Produk baru: {importSummary.inserted}, diperbarui: {importSummary.updated}.</p>
+                  </div>
+                )}
+
+                {previewRows.length > 0 && (
+                  <div className="table-responsive" style={{ maxHeight: '260px', overflowY: 'auto' }}>
+                    <table className="table table-sm table-hover">
+                      <thead className="table-light">
+                        <tr>
+                          <th>Nama</th>
+                          <th>SKU</th>
+                          <th>Kategori</th>
+                          <th>Stok</th>
+                          <th>Harga</th>
+                          <th>Kedaluwarsa</th>
+                          <th>Supplier</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {previewRows.map((row, index) => (
+                          <tr key={`${row.sku}-${index}`}>
+                            <td>{row.name}</td>
+                            <td>{row.sku}</td>
+                            <td>{row.category}</td>
+                            <td>{row.stock_quantity}</td>
+                            <td>Rp {Number(row.price || 0).toLocaleString('id-ID')}</td>
+                            <td>{row.expiry_date}</td>
+                            <td>{row.supplier}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {importRows.length > previewRows.length && (
+                      <small className="text-muted">Menampilkan 10 baris pertama dari {importRows.length}.</small>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={handleCloseImport} disabled={isUploading}>Tutup</button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleUploadImport}
+                  disabled={isUploading || importRows.length === 0 || importErrors.length > 0}
+                >
+                  {isUploading ? 'Mengunggah...' : 'Unggah Produk'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="card h-100 d-flex flex-column">
         <div className="card-header">
           <h3>Manajemen Produk</h3>
         </div>
         <div className="card-body d-flex flex-column flex-grow-1">
-          <div className="row mb-3 flex-shrink-0">
-            <div className="col-12 col-md-6 mb-2 mb-md-0">
+          <div className="row mb-3 flex-shrink-0 g-2">
+            <div className="col-12 col-md-3">
                 <button className="btn btn-success w-100" onClick={handleAddNew}>Tambah Produk</button>
+            </div>
+            <div className="col-12 col-md-3">
+                <button className="btn btn-outline-primary w-100" onClick={handleOpenImport}>Import Produk (CSV)</button>
             </div>
             <div className="col-12 col-md-6">
                 <input 

@@ -266,6 +266,107 @@ app.delete("/api/products/:id", authenticateToken, authorizeRoles(['admin']), (r
   });
 });
 
+app.post('/api/products/bulk', authenticateToken, authorizeRoles(['admin', 'pharmacist']), (req: AuthRequest, res: Response) => {
+    const rawProducts = Array.isArray(req.body?.products) ? req.body.products : [];
+    if (!rawProducts.length) {
+        return res.status(400).json({ error: 'Tidak ada data produk yang dikirim.' });
+    }
+
+    interface IncomingProduct {
+        name?: string;
+        sku?: string;
+        category?: string;
+        stock_quantity?: number | string;
+        price?: number | string;
+        expiry_date?: string;
+        supplier?: string;
+    }
+
+    const errors: string[] = [];
+    const normalizedProducts = rawProducts.map((product: IncomingProduct, index: number) => {
+        const rowNumber = index + 1;
+        const name = typeof product.name === 'string' ? product.name.trim() : '';
+        const sku = typeof product.sku === 'string' ? product.sku.trim() : '';
+        const category = typeof product.category === 'string' && product.category.trim() !== '' ? product.category.trim() : 'Obat Bebas';
+        const stockQuantity = Number(product.stock_quantity);
+        const price = Number(product.price);
+        const expiryDate = typeof product.expiry_date === 'string' && product.expiry_date.trim() !== '' ? product.expiry_date.trim() : null;
+        const supplier = typeof product.supplier === 'string' ? product.supplier.trim() : '';
+
+        if (!name) errors.push(`Baris ${rowNumber}: nama produk wajib diisi.`);
+        if (!sku) errors.push(`Baris ${rowNumber}: SKU wajib diisi.`);
+        if (!Number.isFinite(stockQuantity) || stockQuantity < 0) errors.push(`Baris ${rowNumber}: stok harus berupa angka >= 0.`);
+        if (!Number.isFinite(price) || price < 0) errors.push(`Baris ${rowNumber}: harga harus berupa angka >= 0.`);
+        if (expiryDate && Number.isNaN(Date.parse(expiryDate))) errors.push(`Baris ${rowNumber}: tanggal kedaluwarsa tidak valid.`);
+
+        return {
+            name,
+            sku,
+            category,
+            stock_quantity: Math.max(0, Math.round(stockQuantity || 0)),
+            price: Math.max(0, price || 0),
+            expiry_date: expiryDate,
+            supplier
+        };
+    });
+
+    if (errors.length) {
+        return res.status(400).json({ error: 'Validasi gagal.', details: errors });
+    }
+
+    db.serialize(() => {
+        db.run('BEGIN TRANSACTION');
+        let inserted = 0;
+        let updated = 0;
+
+        const operations = normalizedProducts.map((product: typeof normalizedProducts[number], index: number) => new Promise<void>((resolve, reject) => {
+            const params = [product.name, product.sku, product.category, product.stock_quantity, product.price, product.expiry_date, product.supplier];
+            db.run(
+                `INSERT OR IGNORE INTO products (name, sku, category, stock_quantity, price, expiry_date, supplier)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                params,
+                function (err) {
+                    if (err) return reject(new Error(`Baris ${index + 1}: ${err.message}`));
+                    if (this.changes === 1) {
+                        inserted += 1;
+                        return resolve();
+                    }
+                    db.run(
+                        `UPDATE products SET name = ?, category = ?, stock_quantity = ?, price = ?, expiry_date = ?, supplier = ? WHERE sku = ?`,
+                        [product.name, product.category, product.stock_quantity, product.price, product.expiry_date, product.supplier, product.sku],
+                        function (updateErr) {
+                            if (updateErr) return reject(new Error(`Baris ${index + 1}: ${updateErr.message}`));
+                            updated += this.changes || 0;
+                            resolve();
+                        }
+                    );
+                }
+            );
+        }));
+
+        Promise.all(operations)
+            .then(() => {
+                db.run('COMMIT', (commitErr) => {
+                    if (commitErr) {
+                        return res.status(500).json({ error: 'Gagal menyimpan data produk.', details: commitErr.message });
+                    }
+                    res.json({
+                        message: 'Bulk upload produk berhasil.',
+                        summary: {
+                            total: normalizedProducts.length,
+                            inserted,
+                            updated
+                        }
+                    });
+                });
+            })
+            .catch(error => {
+                db.run('ROLLBACK');
+                res.status(400).json({ error: error.message });
+            });
+    });
+});
+
 // === API PROMOSI ===
 app.get('/api/promotions', authenticateToken, authorizeRoles(['admin', 'pharmacist']), (req: AuthRequest, res: Response) => {
     const sql = `${PROMOTION_SELECT_BASE} GROUP BY p.id ORDER BY p.created_at DESC`;
