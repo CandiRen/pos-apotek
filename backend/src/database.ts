@@ -45,8 +45,37 @@ const db = new verbose_db.Database(DBSOURCE, (err) => {
         product_id INTEGER NOT NULL,
         quantity INTEGER NOT NULL,
         price_per_item REAL NOT NULL,
+        discount_amount REAL NOT NULL DEFAULT 0,
         FOREIGN KEY (sale_id) REFERENCES sales (id) ON DELETE CASCADE,
         FOREIGN KEY (product_id) REFERENCES products (id) ON DELETE RESTRICT
+      )`);
+      db.run(`ALTER TABLE sale_items ADD COLUMN discount_amount REAL NOT NULL DEFAULT 0`, (err) => {
+        if (err && !err.message.includes('duplicate column name')) {
+          console.error('Failed to ensure discount_amount column exists on sale_items table:', err.message);
+        }
+      });
+
+      db.run(`CREATE TABLE IF NOT EXISTS promotions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        buy_quantity INTEGER DEFAULT 0,
+        get_quantity INTEGER DEFAULT 0,
+        discount_percent REAL DEFAULT 0,
+        discount_amount REAL DEFAULT 0,
+        start_date TEXT,
+        end_date TEXT,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )`);
+
+      db.run(`CREATE TABLE IF NOT EXISTS promotion_products (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        promotion_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        FOREIGN KEY (promotion_id) REFERENCES promotions (id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES products (id) ON DELETE RESTRICT,
+        UNIQUE(promotion_id, product_id)
       )`);
 
       // Modul Pasien

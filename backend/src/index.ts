@@ -19,6 +19,150 @@ interface AuthRequest extends Request {
     userRole?: string;
 }
 
+interface PromotionRow {
+    id: number;
+    name: string;
+    type: string;
+    buy_quantity: number;
+    get_quantity: number;
+    discount_percent: number;
+    discount_amount: number;
+    start_date?: string | null;
+    end_date?: string | null;
+    is_active: number;
+    product_ids?: string | null;
+    created_at?: string;
+}
+
+interface PromotionResponse {
+    id: number;
+    name: string;
+    type: string;
+    buy_quantity: number;
+    get_quantity: number;
+    discount_percent: number;
+    discount_amount: number;
+    start_date?: string | null;
+    end_date?: string | null;
+    is_active: number;
+    product_ids: number[];
+    created_at?: string;
+}
+
+const mapPromotionRow = (row: PromotionRow): PromotionResponse => {
+    const productIds = row.product_ids
+        ? row.product_ids.split(',').filter(Boolean).map(id => Number(id))
+        : [];
+    return {
+        id: row.id,
+        name: row.name,
+        type: row.type,
+        buy_quantity: row.buy_quantity,
+        get_quantity: row.get_quantity,
+        discount_percent: row.discount_percent,
+        discount_amount: row.discount_amount,
+        start_date: row.start_date || null,
+        end_date: row.end_date || null,
+        is_active: row.is_active,
+        product_ids: productIds,
+        created_at: row.created_at
+    };
+};
+
+const normalizeDate = (value: any) => {
+    if (!value) return null;
+    return value;
+};
+
+const PROMOTION_SELECT_BASE = `SELECT p.*, GROUP_CONCAT(pp.product_id) AS product_ids FROM promotions p LEFT JOIN promotion_products pp ON p.id = pp.promotion_id`;
+const VALID_PROMOTION_TYPES = ['BOGO', 'BUY_X_PERCENT_OFF'];
+
+const fetchPromotionById = (id: number, callback: (err: Error | null, promotion?: PromotionResponse) => void) => {
+    const sql = `${PROMOTION_SELECT_BASE} WHERE p.id = ? GROUP BY p.id`;
+    db.get(sql, [id], (err, row: PromotionRow) => {
+        if (err) return callback(err);
+        if (!row) return callback(null, undefined);
+        callback(null, mapPromotionRow(row));
+    });
+};
+
+const upsertPromotionProducts = (promotionId: number, productIds: number[], callback: (err: Error | null) => void) => {
+    db.run('DELETE FROM promotion_products WHERE promotion_id = ?', [promotionId], (deleteErr) => {
+        if (deleteErr) return callback(deleteErr);
+        if (!productIds || productIds.length === 0) return callback(null);
+
+        let pending = productIds.length;
+        let hasError = false;
+        productIds.forEach((productId) => {
+            db.run('INSERT OR IGNORE INTO promotion_products (promotion_id, product_id) VALUES (?, ?)', [promotionId, productId], (insertErr) => {
+                if (hasError) return;
+                if (insertErr) {
+                    hasError = true;
+                    callback(insertErr);
+                    return;
+                }
+                pending -= 1;
+                if (pending === 0) {
+                    callback(null);
+                }
+            });
+        });
+    });
+};
+
+const parsePromotionInput = (body: any) => {
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    const type = typeof body.type === 'string' ? body.type.trim().toUpperCase() : '';
+
+    if (!name) {
+        return { error: 'Nama promo wajib diisi.' };
+    }
+    if (!VALID_PROMOTION_TYPES.includes(type)) {
+        return { error: 'Tipe promo tidak valid.' };
+    }
+
+    const buyQuantity = Number(body.buy_quantity) || 0;
+    const getQuantity = Number(body.get_quantity) || 0;
+    const discountPercent = Number(body.discount_percent) || 0;
+    const discountAmount = Number(body.discount_amount) || 0;
+    const startDate = normalizeDate(body.start_date);
+    const endDate = normalizeDate(body.end_date);
+    const isActive = body.is_active === 0 || body.is_active === false ? 0 : 1;
+
+    if (type === 'BOGO') {
+        if (buyQuantity <= 0 || getQuantity <= 0) {
+            return { error: 'Promo BOGO membutuhkan jumlah beli dan bonus yang valid.' };
+        }
+    } else if (type === 'BUY_X_PERCENT_OFF') {
+        if (buyQuantity <= 0 || discountPercent <= 0) {
+            return { error: 'Promo beli X diskon % membutuhkan jumlah beli dan persentase diskon yang valid.' };
+        }
+    }
+
+    if (discountAmount < 0 || discountPercent < 0) {
+        return { error: 'Nilai diskon tidak boleh negatif.' };
+    }
+
+    const productIds = Array.isArray(body.product_ids)
+        ? body.product_ids.map((id: any) => Number(id)).filter((id: number) => !Number.isNaN(id))
+        : [];
+
+    return {
+        data: {
+            name,
+            type,
+            buyQuantity,
+            getQuantity,
+            discountPercent,
+            discountAmount,
+            startDate,
+            endDate,
+            isActive,
+            productIds
+        }
+    };
+};
+
 const authenticateToken = (req: AuthRequest, res: Response, next: NextFunction) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -122,6 +266,118 @@ app.delete("/api/products/:id", authenticateToken, authorizeRoles(['admin']), (r
   });
 });
 
+// === API PROMOSI ===
+app.get('/api/promotions', authenticateToken, authorizeRoles(['admin', 'pharmacist']), (req: AuthRequest, res: Response) => {
+    const sql = `${PROMOTION_SELECT_BASE} GROUP BY p.id ORDER BY p.created_at DESC`;
+    db.all(sql, [], (err, rows: PromotionRow[]) => {
+        if (err) return res.status(400).json({ error: err.message });
+        res.json({ data: rows.map(mapPromotionRow) });
+    });
+});
+
+app.get('/api/promotions/active', authenticateToken, authorizeRoles(['admin', 'pharmacist', 'cashier']), (req: AuthRequest, res: Response) => {
+    const sql = `${PROMOTION_SELECT_BASE} WHERE p.is_active = 1 AND (p.start_date IS NULL OR date(p.start_date) <= date('now')) AND (p.end_date IS NULL OR date(p.end_date) >= date('now')) GROUP BY p.id ORDER BY p.created_at DESC`;
+    db.all(sql, [], (err, rows: PromotionRow[]) => {
+        if (err) return res.status(400).json({ error: err.message });
+        res.json({ data: rows.map(mapPromotionRow) });
+    });
+});
+
+app.post('/api/promotions', authenticateToken, authorizeRoles(['admin', 'pharmacist']), (req: AuthRequest, res: Response) => {
+    const parsed = parsePromotionInput(req.body);
+    if ('error' in parsed) {
+        return res.status(400).json({ error: parsed.error });
+    }
+
+    const { name, type, buyQuantity, getQuantity, discountPercent, discountAmount, startDate, endDate, isActive, productIds } = parsed.data;
+
+    db.serialize(() => {
+        db.run('BEGIN TRANSACTION');
+        db.run(
+            `INSERT INTO promotions (name, type, buy_quantity, get_quantity, discount_percent, discount_amount, start_date, end_date, is_active)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [name, type, buyQuantity, getQuantity, discountPercent, discountAmount, startDate, endDate, isActive],
+            function(err) {
+                if (err) {
+                    db.run('ROLLBACK');
+                    return res.status(500).json({ error: 'Gagal menyimpan promo.', details: err.message });
+                }
+                const promotionId = this.lastID;
+                upsertPromotionProducts(promotionId, productIds, (linkErr) => {
+                    if (linkErr) {
+                        db.run('ROLLBACK');
+                        return res.status(500).json({ error: 'Gagal menyimpan produk promo.', details: linkErr.message });
+                    }
+                    db.run('COMMIT', (commitErr) => {
+                        if (commitErr) {
+                            return res.status(500).json({ error: 'Gagal menyimpan promo.', details: commitErr.message });
+                        }
+                        fetchPromotionById(promotionId, (fetchErr, promotion) => {
+                            if (fetchErr) {
+                                return res.status(500).json({ error: 'Gagal mengambil data promo.', details: fetchErr.message });
+                            }
+                            res.status(201).json({ message: 'Promo berhasil dibuat.', data: promotion });
+                        });
+                    });
+                });
+            }
+        );
+    });
+});
+
+app.put('/api/promotions/:id', authenticateToken, authorizeRoles(['admin', 'pharmacist']), (req: AuthRequest, res: Response) => {
+    const promotionId = Number(req.params.id);
+    if (!promotionId) return res.status(400).json({ error: 'ID promo tidak valid.' });
+
+    const parsed = parsePromotionInput(req.body);
+    if ('error' in parsed) {
+        return res.status(400).json({ error: parsed.error });
+    }
+
+    const { name, type, buyQuantity, getQuantity, discountPercent, discountAmount, startDate, endDate, isActive, productIds } = parsed.data;
+
+    db.serialize(() => {
+        db.run('BEGIN TRANSACTION');
+        db.run(
+            `UPDATE promotions SET name = ?, type = ?, buy_quantity = ?, get_quantity = ?, discount_percent = ?, discount_amount = ?, start_date = ?, end_date = ?, is_active = ? WHERE id = ?`,
+            [name, type, buyQuantity, getQuantity, discountPercent, discountAmount, startDate, endDate, isActive, promotionId],
+            function(err) {
+                if (err) {
+                    db.run('ROLLBACK');
+                    return res.status(500).json({ error: 'Gagal memperbarui promo.', details: err.message });
+                }
+                upsertPromotionProducts(promotionId, productIds, (linkErr) => {
+                    if (linkErr) {
+                        db.run('ROLLBACK');
+                        return res.status(500).json({ error: 'Gagal menyimpan produk promo.', details: linkErr.message });
+                    }
+                    db.run('COMMIT', (commitErr) => {
+                        if (commitErr) {
+                            return res.status(500).json({ error: 'Gagal memperbarui promo.', details: commitErr.message });
+                        }
+                        fetchPromotionById(promotionId, (fetchErr, promotion) => {
+                            if (fetchErr) {
+                                return res.status(500).json({ error: 'Gagal mengambil data promo.', details: fetchErr.message });
+                            }
+                            res.json({ message: 'Promo berhasil diperbarui.', data: promotion });
+                        });
+                    });
+                });
+            }
+        );
+    });
+});
+
+app.delete('/api/promotions/:id', authenticateToken, authorizeRoles(['admin']), (req: AuthRequest, res: Response) => {
+    const promotionId = Number(req.params.id);
+    if (!promotionId) return res.status(400).json({ error: 'ID promo tidak valid.' });
+
+    db.run('DELETE FROM promotions WHERE id = ?', [promotionId], function(err) {
+        if (err) return res.status(500).json({ error: 'Gagal menghapus promo.', details: err.message });
+        res.json({ message: 'Promo berhasil dihapus.', deleted: this.changes });
+    });
+});
+
 // === API PENJUALAN ===
 app.get('/api/sales', authenticateToken, authorizeRoles(['admin', 'cashier', 'pharmacist']), (req: AuthRequest, res: Response) => {
     const sql = `SELECT id, total_amount, discount_amount, payment_method, created_at FROM sales ORDER BY created_at DESC`;
@@ -137,11 +393,12 @@ app.get('/api/sales/:id', authenticateToken, authorizeRoles(['admin', 'cashier',
         if (err) return res.status(400).json({ error: err.message });
         if (!sale) return res.status(404).json({ error: 'Transaksi tidak ditemukan' });
 
-        const sql_items = `SELECT si.quantity, si.price_per_item, p.name FROM sale_items si JOIN products p ON si.product_id = p.id WHERE si.sale_id = ?`;
+        const sql_items = `SELECT si.quantity, si.price_per_item, si.discount_amount, p.name FROM sale_items si JOIN products p ON si.product_id = p.id WHERE si.sale_id = ?`;
         db.all(sql_items, [id], (err, items) => {
             if (err) return res.status(400).json({ error: err.message });
-            const subtotal = items.reduce((sum: number, item: any) => sum + item.quantity * item.price_per_item, 0);
-            res.json({ data: { ...sale, items: items, subtotal_amount: subtotal } });
+            const subtotal = items.reduce((sum: number, item: any) => sum + (item.quantity * item.price_per_item) - item.discount_amount, 0);
+            const itemDiscountTotal = items.reduce((sum: number, item: any) => sum + item.discount_amount, 0);
+            res.json({ data: { ...sale, items: items, subtotal_amount: subtotal, item_discount_total: itemDiscountTotal } });
         });
     });
 });
@@ -153,45 +410,72 @@ app.post('/api/sales', authenticateToken, authorizeRoles(['admin', 'cashier', 'p
     return res.status(400).json({ error: 'Transaksi harus memiliki setidaknya satu item.' });
   }
 
-  const subtotal = items.reduce((sum: number, item: any) => {
-    const quantity = Number(item.quantity) || 0;
-    const pricePerItem = Number(item.price_per_item) || 0;
-    return sum + quantity * pricePerItem;
-  }, 0);
-
-  if (subtotal <= 0) {
-    return res.status(400).json({ error: 'Subtotal transaksi tidak valid.' });
+  interface PreparedItem {
+    productId: number;
+    quantity: number;
+    pricePerItem: number;
+    discountAmount: number;
   }
 
-  const discountAmount = Math.max(0, Math.min(requestedDiscount, subtotal));
-  const totalAmount = subtotal - discountAmount;
+  const preparedItems: PreparedItem[] = [];
+  let grossSubtotal = 0;
+  let itemDiscountTotal = 0;
+
+  for (const rawItem of items) {
+    const productId = Number(rawItem.product_id);
+    const quantity = Number(rawItem.quantity) || 0;
+    const pricePerItem = Number(rawItem.price_per_item) || 0;
+    const lineGross = quantity * pricePerItem;
+
+    if (!productId || quantity <= 0 || pricePerItem < 0) {
+      return res.status(400).json({ error: 'Data item penjualan tidak valid.' });
+    }
+
+    const requestedItemDiscount = Number(rawItem.discount_amount) || 0;
+    const discountAmount = Math.max(0, Math.min(requestedItemDiscount, lineGross));
+
+    preparedItems.push({ productId, quantity, pricePerItem, discountAmount });
+    grossSubtotal += lineGross;
+    itemDiscountTotal += discountAmount;
+  }
+
+  const netSubtotal = grossSubtotal - itemDiscountTotal;
+
+  if (netSubtotal <= 0) {
+    return res.status(400).json({ error: 'Subtotal transaksi tidak valid setelah diskon item.' });
+  }
+
+  const saleDiscount = Math.max(0, Math.min(requestedDiscount, netSubtotal));
+  const totalAmount = netSubtotal - saleDiscount;
 
   db.serialize(() => {
     db.run('BEGIN TRANSACTION');
-    db.run('INSERT INTO sales (total_amount, discount_amount, payment_method) VALUES (?, ?, ?)', [totalAmount, discountAmount, payment_method], function(err) {
+    db.run('INSERT INTO sales (total_amount, discount_amount, payment_method) VALUES (?, ?, ?)', [totalAmount, saleDiscount, payment_method], function(err) {
       if (err) { db.run('ROLLBACK'); return res.status(500).json({ error: 'Gagal mencatat penjualan.', details: err.message }); }
       const saleId = this.lastID;
-      const itemPromises = items.map((item: any) => new Promise<void>((resolve, reject) => {
-        const quantity = Number(item.quantity) || 0;
-        const pricePerItem = Number(item.price_per_item) || 0;
-        const productId = Number(item.product_id);
-
-        if (!productId || quantity <= 0 || pricePerItem < 0) {
-          return reject(new Error('Data item penjualan tidak valid.'));
-        }
-
-        db.run('INSERT INTO sale_items (sale_id, product_id, quantity, price_per_item) VALUES (?, ?, ?, ?)', [saleId, productId, quantity, pricePerItem], (err) => {
+      const itemPromises = preparedItems.map(item => new Promise<void>((resolve, reject) => {
+        db.run('INSERT INTO sale_items (sale_id, product_id, quantity, price_per_item, discount_amount) VALUES (?, ?, ?, ?, ?)', [saleId, item.productId, item.quantity, item.pricePerItem, item.discountAmount], (err) => {
           if (err) return reject(new Error('Gagal mencatat item penjualan.'));
-          db.run('UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ? AND stock_quantity >= ?', [quantity, productId, quantity], function(err) {
+          db.run('UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ? AND stock_quantity >= ?', [item.quantity, item.productId, item.quantity], function(err) {
             if (err) return reject(new Error('Gagal memperbarui stok produk.'));
-            if (this.changes === 0) return reject(new Error(`Stok tidak mencukupi untuk produk ID: ${productId}`));
+            if (this.changes === 0) return reject(new Error(`Stok tidak mencukupi untuk produk ID: ${item.productId}`));
             resolve();
           });
         });
       }));
       Promise.all(itemPromises).then(() => {
         db.run('COMMIT');
-        res.status(201).json({ message: 'Transaksi berhasil', sale_id: saleId, totals: { subtotal, discount_amount: discountAmount, total_amount: totalAmount } });
+        res.status(201).json({
+          message: 'Transaksi berhasil',
+          sale_id: saleId,
+          totals: {
+            gross_subtotal: grossSubtotal,
+            item_discount_total: itemDiscountTotal,
+            net_subtotal: netSubtotal,
+            sale_discount_amount: saleDiscount,
+            total_amount: totalAmount
+          }
+        });
       })
       .catch(error => { db.run('ROLLBACK'); res.status(400).json({ error: error.message }); });
     });

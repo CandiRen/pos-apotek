@@ -7,6 +7,7 @@ interface Sale {
     id: number;
     total_amount: number;
     discount_amount: number;
+    item_discount_total?: number;
     payment_method: string;
     created_at: string;
 }
@@ -15,6 +16,7 @@ interface SaleItem {
     name: string;
     quantity: number;
     price_per_item: number;
+    discount_amount: number;
 }
 
 interface SaleDetail extends Sale {
@@ -29,8 +31,12 @@ export default function SalesHistory() {
     const [selectedSale, setSelectedSale] = useState<SaleDetail | null>(null);
 
     const subtotalForSelectedSale = selectedSale
-        ? selectedSale.subtotal_amount ?? selectedSale.items.reduce((sum, item) => sum + item.quantity * item.price_per_item, 0)
+        ? selectedSale.subtotal_amount ?? selectedSale.items.reduce((sum, item) => sum + (item.quantity * item.price_per_item) - (item.discount_amount || 0), 0)
         : 0;
+    const itemDiscountForSelectedSale = selectedSale
+        ? selectedSale.item_discount_total ?? selectedSale.items.reduce((sum, item) => sum + (item.discount_amount || 0), 0)
+        : 0;
+    const grossSubtotalForSelectedSale = subtotalForSelectedSale + itemDiscountForSelectedSale;
     const discountForSelectedSale = selectedSale?.discount_amount ?? 0;
 
     const fetchSales = () => {
@@ -68,11 +74,13 @@ export default function SalesHistory() {
             const printWindow = window.open('', '_blank');
             if (!printWindow) { alert('Pop-up diblokir. Izinkan pop-up untuk mencetak struk.'); return; }
 
-            const subtotalAmount = selectedSale.subtotal_amount ?? selectedSale.items.reduce((sum, item) => sum + item.quantity * item.price_per_item, 0);
-            const discountValue = selectedSale.discount_amount || 0;
-            const discountDisplay = discountValue > 0
-                ? `- Rp ${discountValue.toLocaleString('id-ID')}`
-                : `Rp ${discountValue.toLocaleString('id-ID')}`;
+            const subtotalAmount = selectedSale.subtotal_amount ?? selectedSale.items.reduce((sum, item) => sum + (item.quantity * item.price_per_item) - (item.discount_amount || 0), 0);
+            const itemDiscountTotal = selectedSale.item_discount_total ?? selectedSale.items.reduce((sum, item) => sum + (item.discount_amount || 0), 0);
+            const grossSubtotal = subtotalAmount + itemDiscountTotal;
+            const saleDiscountValue = selectedSale.discount_amount || 0;
+            const saleDiscountDisplay = saleDiscountValue > 0
+                ? `- Rp ${saleDiscountValue.toLocaleString('id-ID')}`
+                : `Rp ${saleDiscountValue.toLocaleString('id-ID')}`;
 
             let receiptContent = `
                 <html>
@@ -108,6 +116,7 @@ export default function SalesHistory() {
                                 <th>Produk</th>
                                 <th>Qty</th>
                                 <th>Harga</th>
+                                <th>Diskon</th>
                                 <th>Subtotal</th>
                             </tr>
                         </thead>
@@ -115,12 +124,16 @@ export default function SalesHistory() {
             `;
 
             selectedSale.items.forEach(item => {
+                const lineGross = item.quantity * item.price_per_item;
+                const lineDiscount = item.discount_amount || 0;
+                const lineNet = lineGross - lineDiscount;
                 receiptContent += `
                             <tr>
                                 <td>${item.name}</td>
                                 <td>${item.quantity}</td>
                                 <td>${item.price_per_item.toLocaleString('id-ID')}</td>
-                                <td>${(item.quantity * item.price_per_item).toLocaleString('id-ID')}</td>
+                                <td>${lineDiscount.toLocaleString('id-ID')}</td>
+                                <td>${lineNet.toLocaleString('id-ID')}</td>
                             </tr>
                 `;
             });
@@ -128,8 +141,10 @@ export default function SalesHistory() {
             receiptContent += `
                         </tbody>
                     </table>
-                    <p style="text-align:right; margin-top:10px;">Subtotal: Rp ${subtotalAmount.toLocaleString('id-ID')}</p>
-                    <p style="text-align:right; margin:0;">Diskon: ${discountDisplay}</p>
+                    <p style="text-align:right; margin-top:10px;">Subtotal (Kotor): Rp ${grossSubtotal.toLocaleString('id-ID')}</p>
+                    <p style="text-align:right; margin:0;">Diskon Item: - Rp ${itemDiscountTotal.toLocaleString('id-ID')}</p>
+                    <p style="text-align:right; margin:0;">Subtotal (Bersih): Rp ${subtotalAmount.toLocaleString('id-ID')}</p>
+                    <p style="text-align:right; margin:0;">Diskon Transaksi: ${saleDiscountDisplay}</p>
                     <div class="total">
                         Total: Rp ${selectedSale.total_amount.toLocaleString('id-ID')}
                     </div>
@@ -174,6 +189,7 @@ export default function SalesHistory() {
                                             <th>Produk</th>
                                             <th>Jumlah</th>
                                             <th>Harga Satuan</th>
+                                            <th>Diskon</th>
                                             <th>Subtotal</th>
                                         </tr>
                                     </thead>
@@ -183,17 +199,26 @@ export default function SalesHistory() {
                                                 <td>{item.name}</td>
                                                 <td>{item.quantity}</td>
                                                 <td>Rp {item.price_per_item.toLocaleString('id-ID')}</td>
-                                                <td>Rp {(item.quantity * item.price_per_item).toLocaleString('id-ID')}</td>
+                                                <td>Rp {(item.discount_amount || 0).toLocaleString('id-ID')}</td>
+                                                <td>Rp {((item.quantity * item.price_per_item) - (item.discount_amount || 0)).toLocaleString('id-ID')}</td>
                                             </tr>
                                         ))}
                                     </tbody>
                                 </table>
                                 <div className="d-flex justify-content-between mt-3">
-                                    <span>Subtotal</span>
+                                    <span>Subtotal (Kotor)</span>
+                                    <span>Rp {grossSubtotalForSelectedSale.toLocaleString('id-ID')}</span>
+                                </div>
+                                <div className="d-flex justify-content-between text-danger">
+                                    <span>Diskon Item</span>
+                                    <span>- Rp {itemDiscountForSelectedSale.toLocaleString('id-ID')}</span>
+                                </div>
+                                <div className="d-flex justify-content-between mt-1">
+                                    <span>Subtotal (Bersih)</span>
                                     <span>Rp {subtotalForSelectedSale.toLocaleString('id-ID')}</span>
                                 </div>
                                 <div className="d-flex justify-content-between text-danger">
-                                    <span>Diskon</span>
+                                    <span>Diskon Transaksi</span>
                                     <span>- Rp {discountForSelectedSale.toLocaleString('id-ID')}</span>
                                 </div>
                                 <h5 className="text-end mt-3">Total: Rp {selectedSale.total_amount.toLocaleString('id-ID')}</h5>

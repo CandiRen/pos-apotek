@@ -1,4 +1,5 @@
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect } from 'react';
+import type { FormEvent } from 'react';
 import { apiFetch } from '../api'; // Ganti import fetch standar
 
 const API_URL = 'http://localhost:3001/api';

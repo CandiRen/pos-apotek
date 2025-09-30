@@ -35,6 +35,7 @@ export default function Layout() {
                 <NavLink to="/cashier">Kasir</NavLink>
                 <NavLink to="/products">Manajemen Produk</NavLink>
                 <NavLink to="/prescriptions">Manajemen Resep</NavLink>
+                <NavLink to="/promotions">Manajemen Promo</NavLink>
                 <NavLink to="/history">Riwayat Penjualan</NavLink> {/* Link baru */}
             </ul>
             <button className="btn btn-outline-light" onClick={handleLogout}>Logout</button>

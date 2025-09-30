@@ -1,4 +1,5 @@
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect } from 'react';
+import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api';
 
@@ -75,7 +76,7 @@ export default function PrescriptionManagement() {
     }, [doctorSearch]);
 
     useEffect(() => {
-        const timeouts: NodeJS.Timeout[] = [];
+        const timeouts: Array<ReturnType<typeof setTimeout>> = [];
         prescriptionItems.forEach(item => {
             if (item.productSearch.length < 2 || (item.product && item.product.name === item.productSearch)) {
                 updateItem(item.tempId, 'searchResults', []);
@@ -170,7 +171,8 @@ export default function PrescriptionManagement() {
             product_id: item.product_id, // This now comes from the expanded GET /api/prescriptions/:id
             name: item.name, 
             quantity: item.quantity, 
-            price_per_item: item.price_per_item 
+            price_per_item: item.price_per_item,
+            discount_amount: 0
         }));
         navigate('/cashier', { state: { cartItems: cartItems } });
     };

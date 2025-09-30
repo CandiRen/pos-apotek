@@ -7,14 +7,14 @@ export const apiFetch = async (url: string, options: RequestInit = {}) => {
     const token = getToken();
 
     // Siapkan header default
-    const headers = {
-        'Content-Type': 'application/json',
-        ...options.headers,
-    };
+    const headers = new Headers(options.headers as HeadersInit | undefined);
+    if (!headers.has('Content-Type')) {
+        headers.set('Content-Type', 'application/json');
+    }
 
     // Jika token ada, tambahkan ke header Authorization
     if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
+        headers.set('Authorization', `Bearer ${token}`);
     }
 
     const response = await fetch(url, {
