@@ -18,7 +18,7 @@ interface Product {
 interface Promotion {
   id: number;
   name: string;
-  type: 'BOGO' | 'BUY_X_PERCENT_OFF';
+  type: 'BOGO' | 'PWP' | 'ITEM_DISCOUNT' | 'GWP';
   buy_quantity: number;
   get_quantity: number;
   discount_percent: number;
@@ -27,6 +27,10 @@ interface Promotion {
   end_date?: string | null;
   is_active: number;
   product_ids: number[];
+  gift_product_id?: number | null;
+  gift_quantity?: number | null;
+  gift_product_name?: string | null;
+  gift_product_price?: number | null;
 }
 
 interface CartItem {
@@ -38,6 +42,8 @@ interface CartItem {
   is_manual_discount?: boolean;
   applied_promotion_id?: number | null;
   applied_promotion_name?: string | null;
+  is_gift?: boolean;
+  gift_source_promotion_id?: number | null;
 }
 
 interface SaleDetailItem {
@@ -90,7 +96,7 @@ const calculateBestPromotion = (
         const freeItems = eligibleSets * promotion.get_quantity;
         discount = freeItems * item.price_per_item;
       }
-    } else if (promotion.type === 'BUY_X_PERCENT_OFF') {
+    } else if (promotion.type === 'PWP') {
       if (promotion.buy_quantity > 0) {
         const groups = Math.floor(item.quantity / promotion.buy_quantity);
         if (groups > 0) {
@@ -103,6 +109,17 @@ const calculateBestPromotion = (
             : 0;
           discount = Math.max(percentDiscount, amountDiscount);
         }
+      }
+    } else if (promotion.type === 'ITEM_DISCOUNT') {
+      const minimumQty = promotion.buy_quantity > 0 ? promotion.buy_quantity : 0;
+      if (minimumQty === 0 || item.quantity >= minimumQty) {
+        const percentDiscount = promotion.discount_percent > 0
+          ? item.quantity * item.price_per_item * (promotion.discount_percent / 100)
+          : 0;
+        const amountDiscount = promotion.discount_amount > 0
+          ? promotion.discount_amount * item.quantity
+          : 0;
+        discount = Math.max(percentDiscount, amountDiscount);
       }
     }
 
@@ -147,7 +164,8 @@ export default function Cashier() {
 
   const applyPromotionsToCart = useCallback((items: CartItem[]) => {
     let changed = false;
-    const updated = items.map(item => {
+    const baseItems = items.filter(item => !item.is_gift);
+    const adjustedBase = baseItems.map(item => {
       const maxDiscount = item.quantity * item.price_per_item;
       const currentDiscount = item.discount_amount || 0;
 
@@ -183,8 +201,53 @@ export default function Cashier() {
       return item;
     });
 
-    return { updated, changed };
-  }, [promotions]);
+    const previousGiftCount = items.filter(item => item.is_gift).length;
+    const gifts: CartItem[] = [];
+
+    promotions.forEach(promotion => {
+      if (promotion.type !== 'GWP') return;
+      if (!promotion.product_ids || promotion.product_ids.length === 0) return;
+      if (!promotion.gift_product_id || promotion.buy_quantity <= 0) return;
+
+      const totalTriggerQty = adjustedBase
+        .filter(item => promotion.product_ids.includes(item.product_id))
+        .reduce((sum, item) => sum + item.quantity, 0);
+
+      const giftMultiplier = Math.floor(totalTriggerQty / promotion.buy_quantity);
+      if (giftMultiplier <= 0) return;
+
+      const giftQtyPerSet = promotion.gift_quantity && promotion.gift_quantity > 0 ? promotion.gift_quantity : 1;
+      const totalGiftQty = giftMultiplier * giftQtyPerSet;
+      const giftProductId = promotion.gift_product_id;
+
+      const giftName = promotion.gift_product_name
+        || products.find(product => product.id === giftProductId)?.name
+        || `Produk #${giftProductId}`;
+      const giftUnitPrice = promotion.gift_product_price
+        ?? products.find(product => product.id === giftProductId)?.price
+        ?? 0;
+
+      gifts.push({
+        product_id: giftProductId,
+        name: `${giftName} (Hadiah)` ,
+        quantity: totalGiftQty,
+        price_per_item: giftUnitPrice,
+        discount_amount: giftUnitPrice * totalGiftQty,
+        is_manual_discount: false,
+        applied_promotion_id: promotion.id,
+        applied_promotion_name: promotion.name,
+        is_gift: true,
+        gift_source_promotion_id: promotion.id
+      });
+    });
+
+    const combined = [...adjustedBase, ...gifts];
+    if (gifts.length > 0 || previousGiftCount > 0) {
+      changed = true;
+    }
+
+    return { updated: combined, changed };
+  }, [promotions, products]);
 
   const updateCart = useCallback((updater: (prev: CartItem[]) => CartItem[]) => {
     setCart(prev => {
@@ -205,15 +268,19 @@ export default function Cashier() {
   }, [promotions]);
 
   const handleRemoveItem = useCallback((productId: number) => {
-    updateCart(prev => prev.filter(item => item.product_id !== productId));
+    const target = cart.find(item => item.product_id === productId && !item.is_gift);
+    if (!target) {
+      return;
+    }
+    updateCart(prev => prev.filter(item => !(item.product_id === productId && !item.is_gift)));
     if (editingItemId === productId) {
       setEditingItemId(null);
     }
-  }, [updateCart, editingItemId]);
+  }, [updateCart, editingItemId, cart]);
 
   const handleOpenEditItem = (productId: number) => {
     const item = cart.find(cartItem => cartItem.product_id === productId);
-    if (!item) return;
+    if (!item || item.is_gift) return;
     const recommended = getRecommendedPromotion(item.product_id, item.quantity, item.price_per_item);
     const maxDiscount = item.quantity * item.price_per_item;
     setEditingItemId(productId);
@@ -310,7 +377,13 @@ export default function Cashier() {
   useEffect(() => {
     setIsLoadingPromotions(true);
     apiFetch(`${API_URL}/promotions/active`)
-      .then(data => { setPromotions(data.data || []); })
+      .then(data => {
+        const list: Promotion[] = (data.data || []).map((promo: any) => ({
+          ...promo,
+          type: promo.type === 'BUY_X_PERCENT_OFF' ? 'PWP' : promo.type
+        }));
+        setPromotions(list);
+      })
       .catch(err => console.error('Gagal memuat promo aktif:', err))
       .finally(() => setIsLoadingPromotions(false));
   }, []);
@@ -605,8 +678,14 @@ export default function Cashier() {
                           </div>
                         </div>
                         <div className="mt-2 d-flex justify-content-end gap-2">
-                          <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => handleOpenEditItem(item.product_id)}>Edit</button>
-                          <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => handleRemoveItem(item.product_id)}>Hapus</button>
+                          {item.is_gift ? (
+                            <span className="text-muted small">Hadiah otomatis</span>
+                          ) : (
+                            <>
+                              <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => handleOpenEditItem(item.product_id)}>Edit</button>
+                              <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => handleRemoveItem(item.product_id)}>Hapus</button>
+                            </>
+                          )}
                         </div>
                       </li>
                     );

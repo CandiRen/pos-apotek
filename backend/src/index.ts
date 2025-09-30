@@ -31,6 +31,10 @@ interface PromotionRow {
     end_date?: string | null;
     is_active: number;
     product_ids?: string | null;
+    gift_product_id?: number | null;
+    gift_quantity?: number | null;
+    gift_product_name?: string | null;
+    gift_product_price?: number | null;
     created_at?: string;
 }
 
@@ -46,6 +50,10 @@ interface PromotionResponse {
     end_date?: string | null;
     is_active: number;
     product_ids: number[];
+    gift_product_id?: number | null;
+    gift_quantity?: number | null;
+    gift_product_name?: string | null;
+    gift_product_price?: number | null;
     created_at?: string;
 }
 
@@ -65,6 +73,10 @@ const mapPromotionRow = (row: PromotionRow): PromotionResponse => {
         end_date: row.end_date || null,
         is_active: row.is_active,
         product_ids: productIds,
+        gift_product_id: row.gift_product_id ?? null,
+        gift_quantity: row.gift_quantity ?? null,
+        gift_product_name: row.gift_product_name || null,
+        gift_product_price: row.gift_product_price ?? null,
         created_at: row.created_at
     };
 };
@@ -74,8 +86,8 @@ const normalizeDate = (value: any) => {
     return value;
 };
 
-const PROMOTION_SELECT_BASE = `SELECT p.*, GROUP_CONCAT(pp.product_id) AS product_ids FROM promotions p LEFT JOIN promotion_products pp ON p.id = pp.promotion_id`;
-const VALID_PROMOTION_TYPES = ['BOGO', 'BUY_X_PERCENT_OFF'];
+const PROMOTION_SELECT_BASE = `SELECT p.*, GROUP_CONCAT(pp.product_id) AS product_ids, gift.name AS gift_product_name, gift.price AS gift_product_price FROM promotions p LEFT JOIN promotion_products pp ON p.id = pp.promotion_id LEFT JOIN products gift ON p.gift_product_id = gift.id`;
+const VALID_PROMOTION_TYPES = ['BOGO', 'PWP', 'ITEM_DISCOUNT', 'GWP', 'BUY_X_PERCENT_OFF'];
 
 const fetchPromotionById = (id: number, callback: (err: Error | null, promotion?: PromotionResponse) => void) => {
     const sql = `${PROMOTION_SELECT_BASE} WHERE p.id = ? GROUP BY p.id`;
@@ -112,12 +124,13 @@ const upsertPromotionProducts = (promotionId: number, productIds: number[], call
 
 const parsePromotionInput = (body: any) => {
     const name = typeof body.name === 'string' ? body.name.trim() : '';
-    const type = typeof body.type === 'string' ? body.type.trim().toUpperCase() : '';
+    const rawType = typeof body.type === 'string' ? body.type.trim().toUpperCase() : '';
+    const normalizedType = rawType === 'BUY_X_PERCENT_OFF' ? 'PWP' : rawType;
 
     if (!name) {
         return { error: 'Nama promo wajib diisi.' };
     }
-    if (!VALID_PROMOTION_TYPES.includes(type)) {
+    if (!VALID_PROMOTION_TYPES.includes(normalizedType)) {
         return { error: 'Tipe promo tidak valid.' };
     }
 
@@ -128,29 +141,59 @@ const parsePromotionInput = (body: any) => {
     const startDate = normalizeDate(body.start_date);
     const endDate = normalizeDate(body.end_date);
     const isActive = body.is_active === 0 || body.is_active === false ? 0 : 1;
-
-    if (type === 'BOGO') {
-        if (buyQuantity <= 0 || getQuantity <= 0) {
-            return { error: 'Promo BOGO membutuhkan jumlah beli dan bonus yang valid.' };
-        }
-    } else if (type === 'BUY_X_PERCENT_OFF') {
-        if (buyQuantity <= 0 || discountPercent <= 0) {
-            return { error: 'Promo beli X diskon % membutuhkan jumlah beli dan persentase diskon yang valid.' };
-        }
-    }
+    const giftProductId = body.gift_product_id ? Number(body.gift_product_id) : null;
+    const giftQuantity = body.gift_quantity ? Number(body.gift_quantity) || 0 : 0;
 
     if (discountAmount < 0 || discountPercent < 0) {
         return { error: 'Nilai diskon tidak boleh negatif.' };
+    }
+
+    switch (normalizedType) {
+        case 'BOGO':
+            if (buyQuantity <= 0 || getQuantity <= 0) {
+                return { error: 'Promo BOGO membutuhkan jumlah beli dan bonus yang valid.' };
+            }
+            break;
+        case 'PWP':
+            if (buyQuantity <= 0) {
+                return { error: 'Promo PWP membutuhkan jumlah beli minimal.' };
+            }
+            if (discountPercent <= 0 && discountAmount <= 0) {
+                return { error: 'Promo PWP membutuhkan diskon persen atau nominal.' };
+            }
+            break;
+        case 'ITEM_DISCOUNT':
+            if (discountPercent <= 0 && discountAmount <= 0) {
+                return { error: 'Promo item membutuhkan diskon persen atau nominal.' };
+            }
+            break;
+        case 'GWP':
+            if (buyQuantity <= 0) {
+                return { error: 'Promo GWP membutuhkan jumlah beli minimal.' };
+            }
+            if (!giftProductId) {
+                return { error: 'Promo GWP membutuhkan produk hadiah.' };
+            }
+            if (giftQuantity <= 0) {
+                return { error: 'Promo GWP membutuhkan jumlah hadiah yang valid.' };
+            }
+            break;
+        default:
+            break;
     }
 
     const productIds = Array.isArray(body.product_ids)
         ? body.product_ids.map((id: any) => Number(id)).filter((id: number) => !Number.isNaN(id))
         : [];
 
+    if ((normalizedType === 'BOGO' || normalizedType === 'PWP' || normalizedType === 'ITEM_DISCOUNT' || normalizedType === 'GWP') && productIds.length === 0) {
+        return { error: 'Pilih minimal satu produk untuk promo ini.' };
+    }
+
     return {
         data: {
             name,
-            type,
+            type: normalizedType,
             buyQuantity,
             getQuantity,
             discountPercent,
@@ -158,7 +201,9 @@ const parsePromotionInput = (body: any) => {
             startDate,
             endDate,
             isActive,
-            productIds
+            productIds,
+            giftProductId,
+            giftQuantity: giftQuantity || 0
         }
     };
 };
@@ -390,14 +435,14 @@ app.post('/api/promotions', authenticateToken, authorizeRoles(['admin', 'pharmac
         return res.status(400).json({ error: parsed.error });
     }
 
-    const { name, type, buyQuantity, getQuantity, discountPercent, discountAmount, startDate, endDate, isActive, productIds } = parsed.data;
+    const { name, type, buyQuantity, getQuantity, discountPercent, discountAmount, startDate, endDate, isActive, productIds, giftProductId, giftQuantity } = parsed.data;
 
     db.serialize(() => {
         db.run('BEGIN TRANSACTION');
         db.run(
-            `INSERT INTO promotions (name, type, buy_quantity, get_quantity, discount_percent, discount_amount, start_date, end_date, is_active)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [name, type, buyQuantity, getQuantity, discountPercent, discountAmount, startDate, endDate, isActive],
+            `INSERT INTO promotions (name, type, buy_quantity, get_quantity, discount_percent, discount_amount, start_date, end_date, gift_product_id, gift_quantity, is_active)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [name, type, buyQuantity, getQuantity, discountPercent, discountAmount, startDate, endDate, giftProductId, giftQuantity, isActive],
             function(err) {
                 if (err) {
                     db.run('ROLLBACK');
@@ -435,13 +480,13 @@ app.put('/api/promotions/:id', authenticateToken, authorizeRoles(['admin', 'phar
         return res.status(400).json({ error: parsed.error });
     }
 
-    const { name, type, buyQuantity, getQuantity, discountPercent, discountAmount, startDate, endDate, isActive, productIds } = parsed.data;
+    const { name, type, buyQuantity, getQuantity, discountPercent, discountAmount, startDate, endDate, isActive, productIds, giftProductId, giftQuantity } = parsed.data;
 
     db.serialize(() => {
         db.run('BEGIN TRANSACTION');
         db.run(
-            `UPDATE promotions SET name = ?, type = ?, buy_quantity = ?, get_quantity = ?, discount_percent = ?, discount_amount = ?, start_date = ?, end_date = ?, is_active = ? WHERE id = ?`,
-            [name, type, buyQuantity, getQuantity, discountPercent, discountAmount, startDate, endDate, isActive, promotionId],
+            `UPDATE promotions SET name = ?, type = ?, buy_quantity = ?, get_quantity = ?, discount_percent = ?, discount_amount = ?, start_date = ?, end_date = ?, gift_product_id = ?, gift_quantity = ?, is_active = ? WHERE id = ?`,
+            [name, type, buyQuantity, getQuantity, discountPercent, discountAmount, startDate, endDate, giftProductId, giftQuantity, isActive, promotionId],
             function(err) {
                 if (err) {
                     db.run('ROLLBACK');

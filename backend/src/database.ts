@@ -65,9 +65,23 @@ const db = new verbose_db.Database(DBSOURCE, (err) => {
         discount_amount REAL DEFAULT 0,
         start_date TEXT,
         end_date TEXT,
+        gift_product_id INTEGER,
+        gift_quantity INTEGER DEFAULT 1,
         is_active INTEGER NOT NULL DEFAULT 1,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (gift_product_id) REFERENCES products (id) ON DELETE SET NULL
       )`);
+
+      db.run(`ALTER TABLE promotions ADD COLUMN gift_product_id INTEGER`, (err) => {
+        if (err && !err.message.includes('duplicate column name')) {
+          console.error('Failed to ensure gift_product_id column exists on promotions table:', err.message);
+        }
+      });
+      db.run(`ALTER TABLE promotions ADD COLUMN gift_quantity INTEGER DEFAULT 1`, (err) => {
+        if (err && !err.message.includes('duplicate column name')) {
+          console.error('Failed to ensure gift_quantity column exists on promotions table:', err.message);
+        }
+      });
 
       db.run(`CREATE TABLE IF NOT EXISTS promotion_products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

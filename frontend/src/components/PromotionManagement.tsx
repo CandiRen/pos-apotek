@@ -7,7 +7,7 @@ const API_URL = 'http://localhost:3001/api';
 interface Promotion {
   id: number;
   name: string;
-  type: 'BOGO' | 'BUY_X_PERCENT_OFF';
+  type: 'BOGO' | 'PWP' | 'ITEM_DISCOUNT' | 'GWP';
   buy_quantity: number;
   get_quantity: number;
   discount_percent: number;
@@ -16,6 +16,10 @@ interface Promotion {
   end_date?: string | null;
   is_active: number;
   product_ids: number[];
+  gift_product_id?: number | null;
+  gift_quantity?: number | null;
+  gift_product_name?: string | null;
+  gift_product_price?: number | null;
   created_at?: string;
 }
 
@@ -27,7 +31,9 @@ interface ProductOption {
 
 const PROMOTION_TYPES = [
   { value: 'BOGO', label: 'Buy One Get One (BOGO)' },
-  { value: 'BUY_X_PERCENT_OFF', label: 'Beli X Diskon %' }
+  { value: 'PWP', label: 'Purchase With Purchase (PWP)' },
+  { value: 'ITEM_DISCOUNT', label: 'Promo Item' },
+  { value: 'GWP', label: 'Gift With Purchase (GWP)' }
 ] as const;
 
 const formatDateInput = (value?: string | null) => {
@@ -53,13 +59,21 @@ export default function PromotionManagement() {
     start_date: '',
     end_date: '',
     is_active: true,
-    product_ids: [] as number[]
+    product_ids: [] as number[],
+    gift_product_id: undefined as number | undefined,
+    gift_quantity: 1
   });
 
   const loadPromotions = () => {
     setIsLoading(true);
     apiFetch(`${API_URL}/promotions`)
-      .then(data => setPromotions(data.data || []))
+      .then(data => {
+        const list: Promotion[] = (data.data || []).map((promo: any) => ({
+          ...promo,
+          type: promo.type === 'BUY_X_PERCENT_OFF' ? 'PWP' : promo.type
+        }));
+        setPromotions(list);
+      })
       .catch(err => console.error('Gagal memuat promo:', err))
       .finally(() => setIsLoading(false));
   };
@@ -89,7 +103,9 @@ export default function PromotionManagement() {
       start_date: '',
       end_date: '',
       is_active: true,
-      product_ids: []
+      product_ids: [],
+      gift_product_id: undefined,
+      gift_quantity: 1
     });
   };
 
@@ -112,7 +128,9 @@ export default function PromotionManagement() {
       start_date: formatDateInput(promotion.start_date),
       end_date: formatDateInput(promotion.end_date),
       is_active: promotion.is_active === 1,
-      product_ids: promotion.product_ids || []
+      product_ids: promotion.product_ids || [],
+      gift_product_id: promotion.gift_product_id ?? undefined,
+      gift_quantity: promotion.gift_quantity ?? 1
     });
     setShowModal(true);
   };
@@ -135,9 +153,24 @@ export default function PromotionManagement() {
       }));
       return;
     }
+    if (['buy_quantity', 'get_quantity', 'discount_percent', 'discount_amount', 'gift_quantity'].includes(name)) {
+      setFormData(prev => ({
+        ...prev,
+        [name]: Number(value)
+      }));
+      return;
+    }
     setFormData(prev => ({
       ...prev,
       [name]: value
+    }));
+  };
+
+  const handleGiftProductChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    const value = event.target.value;
+    setFormData(prev => ({
+      ...prev,
+      gift_product_id: value ? Number(value) : undefined
     }));
   };
 
@@ -150,32 +183,94 @@ export default function PromotionManagement() {
     }));
   };
 
-  const isPromoTypePercent = formData.type === 'BUY_X_PERCENT_OFF';
+  const isPwp = formData.type === 'PWP';
+  const isItemDiscount = formData.type === 'ITEM_DISCOUNT';
+  const isGwp = formData.type === 'GWP';
   const requiresBonusQty = formData.type === 'BOGO';
+  const showDiscountPercent = isPwp || isItemDiscount;
+  const showDiscountAmount = isPwp || isItemDiscount;
 
   const promotionSummary = useMemo(() => {
     if (formData.type === 'BOGO') {
       return `Beli ${formData.buy_quantity} gratis ${formData.get_quantity}`;
     }
-    if (formData.type === 'BUY_X_PERCENT_OFF') {
-      return `Beli ${formData.buy_quantity} diskon ${formData.discount_percent}%`;
+    if (formData.type === 'PWP') {
+      const discountDescription = formData.discount_percent ? `${formData.discount_percent}%` : `Rp ${formData.discount_amount}`;
+      return `Beli ${formData.buy_quantity} diskon ${discountDescription}`;
+    }
+    if (formData.type === 'ITEM_DISCOUNT') {
+      const discountDescription = formData.discount_percent ? `${formData.discount_percent}%` : `Rp ${formData.discount_amount}`;
+      return `Diskon item ${discountDescription}`;
+    }
+    if (formData.type === 'GWP') {
+      return `Beli ${formData.buy_quantity} dapat hadiah ${formData.gift_quantity} item`;
     }
     return '';
-  }, [formData.type, formData.buy_quantity, formData.get_quantity, formData.discount_percent]);
+  }, [formData.type, formData.buy_quantity, formData.get_quantity, formData.discount_percent, formData.discount_amount, formData.gift_quantity]);
+
+  const giftOptions = useMemo(() => {
+    const map = new Map<number, ProductOption>();
+    products.forEach(product => map.set(product.id, product));
+    if (formData.gift_product_id && !map.has(formData.gift_product_id)) {
+      const relatedPromo = promotions.find(promo => promo.id === formData.id);
+      map.set(formData.gift_product_id, {
+        id: formData.gift_product_id,
+        name: relatedPromo?.gift_product_name ?? `Produk #${formData.gift_product_id}`,
+        sku: relatedPromo?.gift_product_name ? (relatedPromo.gift_product_name ?? '') : ''
+      });
+    }
+    return Array.from(map.values());
+  }, [products, formData.gift_product_id, formData.id, promotions]);
+
+  const getPromoDetail = (promo: Promotion) => {
+    switch (promo.type) {
+      case 'BOGO':
+        return `Beli ${promo.buy_quantity} gratis ${promo.get_quantity}`;
+      case 'PWP': {
+        const discountDesc = promo.discount_percent
+          ? `${promo.discount_percent}%`
+          : `Rp ${promo.discount_amount}`;
+        return `Beli ${promo.buy_quantity} diskon ${discountDesc}`;
+      }
+      case 'ITEM_DISCOUNT': {
+        const discountDesc = promo.discount_percent
+          ? `${promo.discount_percent}%`
+          : `Rp ${promo.discount_amount}`;
+        return promo.buy_quantity > 0
+          ? `Min beli ${promo.buy_quantity} diskon ${discountDesc}`
+          : `Diskon ${discountDesc}`;
+      }
+      case 'GWP': {
+        const giftName = promo.gift_product_name ?? `Produk #${promo.gift_product_id}`;
+        const giftQty = promo.gift_quantity ?? 1;
+        return `Beli ${promo.buy_quantity} gratis ${giftQty}x ${giftName}`;
+      }
+      default:
+        return '-';
+    }
+  };
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
+    const buyQuantity = Number(formData.buy_quantity) || 0;
+    const getQuantity = Number(formData.get_quantity) || 0;
+    const discountPercent = Number(formData.discount_percent) || 0;
+    const discountAmount = Number(formData.discount_amount) || 0;
+    const giftQuantity = Number(formData.gift_quantity) || 0;
+    const giftProductId = isGwp ? (formData.gift_product_id ?? null) : null;
     const payload = {
       name: formData.name,
       type: formData.type,
-      buy_quantity: Number(formData.buy_quantity) || 0,
-      get_quantity: Number(formData.get_quantity) || 0,
-      discount_percent: Number(formData.discount_percent) || 0,
-      discount_amount: Number(formData.discount_amount) || 0,
+      buy_quantity: buyQuantity,
+      get_quantity: getQuantity,
+      discount_percent: discountPercent,
+      discount_amount: discountAmount,
       start_date: formData.start_date || null,
       end_date: formData.end_date || null,
       is_active: formData.is_active ? 1 : 0,
-      product_ids: formData.product_ids
+      product_ids: formData.product_ids,
+      gift_product_id: giftProductId,
+      gift_quantity: isGwp ? giftQuantity : 0
     };
 
     const requestOptions = {
@@ -236,28 +331,60 @@ export default function PromotionManagement() {
 
                   <div className="row">
                     <div className="col-md-4 mb-3">
-                      <label className="form-label">Qty Beli</label>
-                      <input type="number" className="form-control" min={1} name="buy_quantity" value={formData.buy_quantity} onChange={handleInputChange} required />
+                      <label className="form-label">Qty Beli{isItemDiscount ? ' (opsional)' : ''}</label>
+                      <input
+                        type="number"
+                        className="form-control"
+                        min={isItemDiscount ? 0 : 1}
+                        name="buy_quantity"
+                        value={formData.buy_quantity}
+                        onChange={handleInputChange}
+                        required={!isItemDiscount}
+                      />
                     </div>
                     {requiresBonusQty && (
                       <div className="col-md-4 mb-3">
-                        <label className="form-label">Bonus</label>
+                        <label className="form-label">Qty Bonus</label>
                         <input type="number" className="form-control" min={1} name="get_quantity" value={formData.get_quantity} onChange={handleInputChange} required />
                       </div>
                     )}
-                    {isPromoTypePercent && (
+                    {isGwp && (
                       <div className="col-md-4 mb-3">
-                        <label className="form-label">Diskon (%)</label>
-                        <input type="number" className="form-control" min={0} max={100} name="discount_percent" value={formData.discount_percent} onChange={handleInputChange} />
-                      </div>
-                    )}
-                    {!isPromoTypePercent && (
-                      <div className="col-md-4 mb-3">
-                        <label className="form-label">Diskon Nominal (opsional)</label>
-                        <input type="number" className="form-control" min={0} name="discount_amount" value={formData.discount_amount} onChange={handleInputChange} />
+                        <label className="form-label">Qty Hadiah</label>
+                        <input type="number" className="form-control" min={1} name="gift_quantity" value={formData.gift_quantity} onChange={handleInputChange} required />
                       </div>
                     )}
                   </div>
+
+                  {(showDiscountPercent || showDiscountAmount) && (
+                    <div className="row">
+                      {showDiscountPercent && (
+                        <div className="col-md-4 mb-3">
+                          <label className="form-label">Diskon (%)</label>
+                          <input type="number" className="form-control" min={0} max={100} name="discount_percent" value={formData.discount_percent} onChange={handleInputChange} />
+                        </div>
+                      )}
+                      {showDiscountAmount && (
+                        <div className="col-md-4 mb-3">
+                          <label className="form-label">Diskon Nominal</label>
+                          <input type="number" className="form-control" min={0} name="discount_amount" value={formData.discount_amount} onChange={handleInputChange} />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {isGwp && (
+                    <div className="mb-3">
+                      <label className="form-label">Produk Hadiah</label>
+                      <select className="form-select" value={formData.gift_product_id ?? ''} onChange={handleGiftProductChange}>
+                        <option value="">-- Pilih produk hadiah --</option>
+                        {giftOptions.map(option => (
+                          <option key={option.id} value={option.id}>{option.name}</option>
+                        ))}
+                      </select>
+                      <small className="text-muted">Gunakan kolom pencarian produk di bawah untuk menambahkan pilihan lain.</small>
+                    </div>
+                  )}
 
                   <div className="row">
                     <div className="col-md-6 mb-3">
@@ -271,7 +398,8 @@ export default function PromotionManagement() {
                   </div>
 
                   <div className="mb-3">
-                    <label className="form-label">Produk yang Dimaksud</label>
+                    <label className="form-label">Produk yang Dipromosikan</label>
+                    {isGwp && <small className="text-muted d-block mb-2">Pilih produk yang memicu hadiah.</small>}
                     <input type="text" className="form-control mb-2" placeholder="Cari produk..." value={productSearch} onChange={e => setProductSearch(e.target.value)} />
                     <div className="list-group" style={{ maxHeight: '180px', overflowY: 'auto' }}>
                       {products.map(product => {
@@ -290,7 +418,7 @@ export default function PromotionManagement() {
                       })}
                       {products.length === 0 && <div className="text-muted text-center py-2">Tidak ada produk ditemukan.</div>}
                     </div>
-                    <small className="text-muted">Biarkan kosong untuk menerapkan promo ke semua produk.</small>
+                    <small className="text-muted">Promo akan diterapkan pada produk yang dipilih.</small>
                   </div>
                 </div>
                 <div className="modal-footer">
@@ -329,10 +457,7 @@ export default function PromotionManagement() {
                     <tr key={promo.id}>
                       <td>{promo.name}</td>
                       <td>{PROMOTION_TYPES.find(type => type.value === promo.type)?.label ?? promo.type}</td>
-                      <td>{promo.type === 'BOGO'
-                        ? `Beli ${promo.buy_quantity} gratis ${promo.get_quantity}`
-                        : `Beli ${promo.buy_quantity} diskon ${promo.discount_percent}%`}
-                      </td>
+                      <td>{getPromoDetail(promo)}</td>
                       <td>
                         {promo.start_date ? formatDateInput(promo.start_date) : '-'}
                         {' '}s/d{' '}
