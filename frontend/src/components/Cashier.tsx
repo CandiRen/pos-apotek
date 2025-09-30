@@ -633,7 +633,7 @@ export default function Cashier() {
                 {isLoadingProducts ? (
                     <div className="spinner-container"><div className="spinner-border text-primary" role="status"><span className="visually-hidden">Loading...</span></div></div>
                 ) : products.length > 0 ? (
-                    products.map(product => (
+                    products.slice(0, 10).map(product => (
                         <button key={product.id} type="button" className="list-group-item list-group-item-action d-flex justify-content-between align-items-center" onClick={() => addToCart(product)} disabled={product.stock_quantity <= 0}>
                             <div><h6 className="mb-1">{product.name}</h6><small>Stok: {product.stock_quantity}</small></div>
                             <span className="fw-bold">Rp {product.price.toLocaleString('id-ID')}</span>
@@ -641,6 +641,9 @@ export default function Cashier() {
                     ))
                 ) : (
                     <div className="text-center text-muted">Tidak ada produk ditemukan.</div>
+                )}
+                {products.length > 10 && (
+                  <div className="text-center text-muted mt-2">Menampilkan 10 dari {products.length} hasil. Gunakan pencarian untuk mempersempit.</div>
                 )}
               </div>
             </div>
