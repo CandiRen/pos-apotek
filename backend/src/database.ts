@@ -30,9 +30,15 @@ const db = new verbose_db.Database(DBSOURCE, (err) => {
       db.run(`CREATE TABLE IF NOT EXISTS sales (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         total_amount REAL NOT NULL,
+        discount_amount REAL NOT NULL DEFAULT 0,
         payment_method TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       )`);
+      db.run(`ALTER TABLE sales ADD COLUMN discount_amount REAL NOT NULL DEFAULT 0`, (err) => {
+        if (err && !err.message.includes('duplicate column name')) {
+          console.error('Failed to ensure discount_amount column exists on sales table:', err.message);
+        }
+      });
       db.run(`CREATE TABLE IF NOT EXISTS sale_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         sale_id INTEGER NOT NULL,

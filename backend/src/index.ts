@@ -124,7 +124,7 @@ app.delete("/api/products/:id", authenticateToken, authorizeRoles(['admin']), (r
 
 // === API PENJUALAN ===
 app.get('/api/sales', authenticateToken, authorizeRoles(['admin', 'cashier', 'pharmacist']), (req: AuthRequest, res: Response) => {
-    const sql = `SELECT id, total_amount, payment_method, created_at FROM sales ORDER BY created_at DESC`;
+    const sql = `SELECT id, total_amount, discount_amount, payment_method, created_at FROM sales ORDER BY created_at DESC`;
     db.all(sql, [], (err, rows) => {
         if (err) return res.status(400).json({ error: err.message });
         res.json({ data: rows });
@@ -132,7 +132,7 @@ app.get('/api/sales', authenticateToken, authorizeRoles(['admin', 'cashier', 'ph
 });
 app.get('/api/sales/:id', authenticateToken, authorizeRoles(['admin', 'cashier', 'pharmacist']), (req: AuthRequest, res: Response) => {
     const id = req.params.id;
-    const sql_sale = `SELECT id, total_amount, payment_method, created_at FROM sales WHERE id = ?`;
+    const sql_sale = `SELECT id, total_amount, discount_amount, payment_method, created_at FROM sales WHERE id = ?`;
     db.get(sql_sale, [id], (err, sale) => {
         if (err) return res.status(400).json({ error: err.message });
         if (!sale) return res.status(404).json({ error: 'Transaksi tidak ditemukan' });
@@ -140,36 +140,66 @@ app.get('/api/sales/:id', authenticateToken, authorizeRoles(['admin', 'cashier',
         const sql_items = `SELECT si.quantity, si.price_per_item, p.name FROM sale_items si JOIN products p ON si.product_id = p.id WHERE si.sale_id = ?`;
         db.all(sql_items, [id], (err, items) => {
             if (err) return res.status(400).json({ error: err.message });
-            res.json({ data: { ...sale, items: items } });
+            const subtotal = items.reduce((sum: number, item: any) => sum + item.quantity * item.price_per_item, 0);
+            res.json({ data: { ...sale, items: items, subtotal_amount: subtotal } });
         });
     });
 });
 app.post('/api/sales', authenticateToken, authorizeRoles(['admin', 'cashier', 'pharmacist']), (req: AuthRequest, res: Response) => {
-  const { total_amount, payment_method, items } = req.body;
-  if (!items || !Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'Transaksi harus memiliki setidaknya satu item.' });
+  const { payment_method, items } = req.body;
+  const requestedDiscount = Number(req.body.discount_amount) || 0;
+
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'Transaksi harus memiliki setidaknya satu item.' });
+  }
+
+  const subtotal = items.reduce((sum: number, item: any) => {
+    const quantity = Number(item.quantity) || 0;
+    const pricePerItem = Number(item.price_per_item) || 0;
+    return sum + quantity * pricePerItem;
+  }, 0);
+
+  if (subtotal <= 0) {
+    return res.status(400).json({ error: 'Subtotal transaksi tidak valid.' });
+  }
+
+  const discountAmount = Math.max(0, Math.min(requestedDiscount, subtotal));
+  const totalAmount = subtotal - discountAmount;
+
   db.serialize(() => {
     db.run('BEGIN TRANSACTION');
-    db.run('INSERT INTO sales (total_amount, payment_method) VALUES (?, ?)', [total_amount, payment_method], function(err) {
+    db.run('INSERT INTO sales (total_amount, discount_amount, payment_method) VALUES (?, ?, ?)', [totalAmount, discountAmount, payment_method], function(err) {
       if (err) { db.run('ROLLBACK'); return res.status(500).json({ error: 'Gagal mencatat penjualan.', details: err.message }); }
       const saleId = this.lastID;
       const itemPromises = items.map((item: any) => new Promise<void>((resolve, reject) => {
-        db.run('INSERT INTO sale_items (sale_id, product_id, quantity, price_per_item) VALUES (?, ?, ?, ?)', [saleId, item.product_id, item.quantity, item.price_per_item], (err) => {
+        const quantity = Number(item.quantity) || 0;
+        const pricePerItem = Number(item.price_per_item) || 0;
+        const productId = Number(item.product_id);
+
+        if (!productId || quantity <= 0 || pricePerItem < 0) {
+          return reject(new Error('Data item penjualan tidak valid.'));
+        }
+
+        db.run('INSERT INTO sale_items (sale_id, product_id, quantity, price_per_item) VALUES (?, ?, ?, ?)', [saleId, productId, quantity, pricePerItem], (err) => {
           if (err) return reject(new Error('Gagal mencatat item penjualan.'));
-          db.run('UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ? AND stock_quantity >= ?', [item.quantity, item.product_id, item.quantity], function(err) {
+          db.run('UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ? AND stock_quantity >= ?', [quantity, productId, quantity], function(err) {
             if (err) return reject(new Error('Gagal memperbarui stok produk.'));
-            if (this.changes === 0) return reject(new Error(`Stok tidak mencukupi untuk produk ID: ${item.product_id}`));
+            if (this.changes === 0) return reject(new Error(`Stok tidak mencukupi untuk produk ID: ${productId}`));
             resolve();
           });
         });
       }));
-      Promise.all(itemPromises).then(() => { db.run('COMMIT'); res.status(201).json({ message: 'Transaksi berhasil', sale_id: saleId }); })
+      Promise.all(itemPromises).then(() => {
+        db.run('COMMIT');
+        res.status(201).json({ message: 'Transaksi berhasil', sale_id: saleId, totals: { subtotal, discount_amount: discountAmount, total_amount: totalAmount } });
+      })
       .catch(error => { db.run('ROLLBACK'); res.status(400).json({ error: error.message }); });
     });
   });
 });
 app.get('/api/sales/today', authenticateToken, authorizeRoles(['admin', 'cashier', 'pharmacist']), (req: AuthRequest, res: Response) => {
     const today = new Date().toISOString().split('T')[0];
-    const sql = `SELECT id, total_amount, payment_method, created_at FROM sales WHERE date(created_at) = ? ORDER BY created_at DESC`;
+    const sql = `SELECT id, total_amount, discount_amount, payment_method, created_at FROM sales WHERE date(created_at) = ? ORDER BY created_at DESC`;
     db.all(sql, [today], (err, rows) => {
         if (err) return res.status(400).json({ error: err.message });
         res.json({ data: rows });

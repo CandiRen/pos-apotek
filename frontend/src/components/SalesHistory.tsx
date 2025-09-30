@@ -6,6 +6,7 @@ const API_URL = 'http://localhost:3001/api';
 interface Sale {
     id: number;
     total_amount: number;
+    discount_amount: number;
     payment_method: string;
     created_at: string;
 }
@@ -18,6 +19,7 @@ interface SaleItem {
 
 interface SaleDetail extends Sale {
     items: SaleItem[];
+    subtotal_amount?: number;
 }
 
 export default function SalesHistory() {
@@ -25,6 +27,11 @@ export default function SalesHistory() {
     const [isLoading, setIsLoading] = useState(true);
     const [showDetailModal, setShowDetailModal] = useState(false);
     const [selectedSale, setSelectedSale] = useState<SaleDetail | null>(null);
+
+    const subtotalForSelectedSale = selectedSale
+        ? selectedSale.subtotal_amount ?? selectedSale.items.reduce((sum, item) => sum + item.quantity * item.price_per_item, 0)
+        : 0;
+    const discountForSelectedSale = selectedSale?.discount_amount ?? 0;
 
     const fetchSales = () => {
         setIsLoading(true);
@@ -60,6 +67,12 @@ export default function SalesHistory() {
         try {
             const printWindow = window.open('', '_blank');
             if (!printWindow) { alert('Pop-up diblokir. Izinkan pop-up untuk mencetak struk.'); return; }
+
+            const subtotalAmount = selectedSale.subtotal_amount ?? selectedSale.items.reduce((sum, item) => sum + item.quantity * item.price_per_item, 0);
+            const discountValue = selectedSale.discount_amount || 0;
+            const discountDisplay = discountValue > 0
+                ? `- Rp ${discountValue.toLocaleString('id-ID')}`
+                : `Rp ${discountValue.toLocaleString('id-ID')}`;
 
             let receiptContent = `
                 <html>
@@ -115,6 +128,8 @@ export default function SalesHistory() {
             receiptContent += `
                         </tbody>
                     </table>
+                    <p style="text-align:right; margin-top:10px;">Subtotal: Rp ${subtotalAmount.toLocaleString('id-ID')}</p>
+                    <p style="text-align:right; margin:0;">Diskon: ${discountDisplay}</p>
                     <div class="total">
                         Total: Rp ${selectedSale.total_amount.toLocaleString('id-ID')}
                     </div>
@@ -173,7 +188,15 @@ export default function SalesHistory() {
                                         ))}
                                     </tbody>
                                 </table>
-                                <h5 className="text-end mt-3">Total: Rp ${selectedSale.total_amount.toLocaleString('id-ID')}</h5>
+                                <div className="d-flex justify-content-between mt-3">
+                                    <span>Subtotal</span>
+                                    <span>Rp {subtotalForSelectedSale.toLocaleString('id-ID')}</span>
+                                </div>
+                                <div className="d-flex justify-content-between text-danger">
+                                    <span>Diskon</span>
+                                    <span>- Rp {discountForSelectedSale.toLocaleString('id-ID')}</span>
+                                </div>
+                                <h5 className="text-end mt-3">Total: Rp {selectedSale.total_amount.toLocaleString('id-ID')}</h5>
                             </div>
                             <div className="modal-footer">
                                 <button type="button" className="btn-secondary" onClick={() => setShowDetailModal(false)}>Tutup</button>

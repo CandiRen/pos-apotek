@@ -1,5 +1,6 @@
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import type { ChangeEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api'; // Ganti import
 
@@ -30,6 +31,8 @@ interface SaleDetailItem {
 interface SaleDetail {
     id: number;
     total_amount: number;
+    discount_amount: number;
+    subtotal_amount?: number;
     payment_method: string;
     created_at: string;
     items: SaleDetailItem[];
@@ -39,7 +42,8 @@ export default function Cashier() {
   const [searchTerm, setSearchTerm] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [total, setTotal] = useState(0);
+  const [discountType, setDiscountType] = useState<'amount' | 'percent'>('amount');
+  const [discountValue, setDiscountValue] = useState(0);
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
@@ -55,10 +59,24 @@ export default function Cashier() {
     }
   }, [location, navigate]);
 
-  useEffect(() => {
-    const newTotal = cart.reduce((sum, item) => sum + item.quantity * item.price_per_item, 0);
-    setTotal(newTotal);
+  const subtotal = useMemo(() => {
+    return cart.reduce((sum, item) => sum + item.quantity * item.price_per_item, 0);
   }, [cart]);
+
+  const discountAmount = useMemo(() => {
+    if (subtotal <= 0) return 0;
+    if (discountType === 'percent') {
+      const boundedPercent = Math.min(Math.max(discountValue, 0), 100);
+      return parseFloat(((subtotal * boundedPercent) / 100).toFixed(2));
+    }
+    const boundedAmount = Math.max(0, discountValue);
+    return Math.min(subtotal, boundedAmount);
+  }, [discountType, discountValue, subtotal]);
+
+  const total = useMemo(() => {
+    if (subtotal <= 0) return 0;
+    return Math.max(0, subtotal - discountAmount);
+  }, [subtotal, discountAmount]);
 
   useEffect(() => {
     setIsLoadingProducts(true);
@@ -82,19 +100,52 @@ export default function Cashier() {
     });
   };
 
+  const handleDiscountTypeChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    const nextType = event.target.value as 'amount' | 'percent';
+    if (nextType === discountType) return;
+
+    const currentDiscountAmount = discountAmount;
+
+    if (nextType === 'amount') {
+      setDiscountValue(parseFloat(currentDiscountAmount.toFixed(2)));
+    } else {
+      const percentage = subtotal === 0 ? 0 : (currentDiscountAmount / subtotal) * 100;
+      setDiscountValue(parseFloat(percentage.toFixed(2)));
+    }
+
+    setDiscountType(nextType);
+  };
+
+  const handleDiscountValueChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const rawValue = Number(event.target.value);
+
+    if (Number.isNaN(rawValue)) {
+      setDiscountValue(0);
+      return;
+    }
+
+    if (discountType === 'percent') {
+      const bounded = Math.min(Math.max(rawValue, 0), 100);
+      setDiscountValue(bounded);
+    } else {
+      setDiscountValue(Math.max(0, rawValue));
+    }
+  };
+
   const completeTransaction = () => {
     if (cart.length === 0) { alert('Keranjang masih kosong!'); return; }
     setShowConfirmModal(true);
   };
 
   const handleConfirmAndComplete = () => {
-    const transactionData = { total_amount: total, payment_method: 'Tunai', items: cart };
+    const transactionData = { total_amount: total, discount_amount: discountAmount, payment_method: 'Tunai', items: cart };
     apiFetch(`${API_URL}/sales`, { method: 'POST', body: JSON.stringify(transactionData) }) // Gunakan apiFetch
     .then(data => {
       setLastSaleId(data.sale_id);
       setShowConfirmModal(false);
       setShowSuccessModal(true);
       setCart([]);
+      setDiscountValue(0);
     })
     .catch(err => { alert(`Terjadi kesalahan: ${err.message}`); setShowConfirmModal(false); });
   };
@@ -105,6 +156,11 @@ export default function Cashier() {
     try {
         const data = await apiFetch(`${API_URL}/sales/${lastSaleId}`); // Gunakan apiFetch
         const sale: SaleDetail = data.data;
+        const subtotalAmount = sale.subtotal_amount ?? sale.items.reduce((sum, item) => sum + item.quantity * item.price_per_item, 0);
+        const discountValue = sale.discount_amount || 0;
+        const discountDisplay = discountValue > 0
+            ? `- Rp ${discountValue.toLocaleString('id-ID')}`
+            : `Rp ${discountValue.toLocaleString('id-ID')}`;
 
         const printWindow = window.open('', '_blank');
         if (!printWindow) { alert('Pop-up diblokir. Izinkan pop-up untuk mencetak struk.'); return; }
@@ -164,6 +220,8 @@ export default function Cashier() {
         receiptContent += `
                     </tbody>
                 </table>
+                <p style="text-align:right; margin-top:10px;">Subtotal: Rp ${subtotalAmount.toLocaleString('id-ID')}</p>
+                <p style="text-align:right; margin:0;">Diskon: ${discountDisplay}</p>
                 <div class="total">
                     Total: Rp ${sale.total_amount.toLocaleString('id-ID')}
                 </div>
@@ -228,8 +286,31 @@ export default function Cashier() {
                 </ul>
               </div>
               <div className="flex-shrink-0">
+                <div className="d-flex justify-content-between align-items-center mb-2">
+                  <span>Subtotal</span>
+                  <strong>Rp {subtotal.toLocaleString('id-ID')}</strong>
+                </div>
+                <div className="mb-3">
+                  <label className="form-label">Diskon</label>
+                  <div className="input-group">
+                    <select className="form-select flex-shrink-0" style={{ maxWidth: '140px' }} value={discountType} onChange={handleDiscountTypeChange}>
+                      <option value="amount">Nominal</option>
+                      <option value="percent">Persen</option>
+                    </select>
+                    <input
+                      type="number"
+                      className="form-control"
+                      min="0"
+                      step={discountType === 'percent' ? '0.1' : '1'}
+                      value={discountValue}
+                      onChange={handleDiscountValueChange}
+                    />
+                    <span className="input-group-text">{discountType === 'percent' ? '%' : 'Rp'}</span>
+                  </div>
+                  <small className="text-muted">Diskon terhitung: Rp {discountAmount.toLocaleString('id-ID')}</small>
+                </div>
                 <h4 className="d-flex justify-content-between align-items-center mb-3"><span>Total</span><strong>Rp {total.toLocaleString('id-ID')}</strong></h4>
-                <button className="btn btn-primary btn-lg w-100" onClick={completeTransaction} disabled={cart.length === 0}>Selesaikan Transaksi</button>
+                <button className="btn btn-primary btn-lg w-100" onClick={completeTransaction} disabled={cart.length === 0 || subtotal <= 0}>Selesaikan Transaksi</button>
               </div>
             </div>
           </div>
@@ -267,6 +348,14 @@ export default function Cashier() {
                     ))}
                   </tbody>
                 </table>
+                <div className="d-flex justify-content-between mt-3">
+                  <span>Subtotal</span>
+                  <span>Rp {subtotal.toLocaleString('id-ID')}</span>
+                </div>
+                <div className="d-flex justify-content-between text-danger">
+                  <span>Diskon</span>
+                  <span>- Rp {discountAmount.toLocaleString('id-ID')}</span>
+                </div>
                 <h5 className="text-end mt-3">Total Pembelian: Rp {total.toLocaleString('id-ID')}</h5>
               </div>
               <div className="modal-footer">
