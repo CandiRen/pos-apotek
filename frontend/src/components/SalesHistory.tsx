@@ -3,6 +3,9 @@ import { apiFetch } from '../api';
 
 const API_URL = 'http://localhost:3001/api';
 
+const formatCurrency = (value: number) =>
+    new Intl.NumberFormat('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(value);
+
 interface Sale {
     id: number;
     total_amount: number;
@@ -79,8 +82,8 @@ export default function SalesHistory() {
             const grossSubtotal = subtotalAmount + itemDiscountTotal;
             const saleDiscountValue = selectedSale.discount_amount || 0;
             const saleDiscountDisplay = saleDiscountValue > 0
-                ? `- Rp ${saleDiscountValue.toLocaleString('id-ID')}`
-                : `Rp ${saleDiscountValue.toLocaleString('id-ID')}`;
+                ? `- Rp ${formatCurrency(saleDiscountValue)}`
+                : `Rp ${formatCurrency(saleDiscountValue)}`;
 
             let receiptContent = `
                 <html>
@@ -90,10 +93,11 @@ export default function SalesHistory() {
                         body { font-family: 'monospace'; font-size: 12px; margin: 0; padding: 10px; }
                         .header { text-align: center; margin-bottom: 10px; }
                         .item-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-                        .item-table th, .item-table td { border-bottom: 1px dashed #ccc; padding: 5px 0; text-align: left; }
+                        .item-table th, .item-table td { border-bottom: 1px dashed #ccc; padding: 5px 6px; text-align: left; }
                         .item-table th:nth-child(2), .item-table td:nth-child(2) { text-align: center; }
                         .item-table th:nth-child(3), .item-table td:nth-child(3) { text-align: right; }
                         .item-table th:nth-child(4), .item-table td:nth-child(4) { text-align: right; }
+                        .item-table th:nth-child(5), .item-table td:nth-child(5) { text-align: right; }
                         .total { text-align: right; margin-top: 10px; font-size: 14px; font-weight: bold; }
                         .footer { text-align: center; margin-top: 20px; }
                     </style>
@@ -125,15 +129,16 @@ export default function SalesHistory() {
 
             selectedSale.items.forEach(item => {
                 const lineGross = item.quantity * item.price_per_item;
-                const lineDiscount = item.discount_amount || 0;
-                const lineNet = lineGross - lineDiscount;
+                const lineDiscount = Math.max(0, item.discount_amount || 0);
+                const lineNet = Math.max(0, lineGross - lineDiscount);
+                const discountDisplay = lineDiscount > 0 ? `- Rp ${formatCurrency(lineDiscount)}` : '-';
                 receiptContent += `
                             <tr>
                                 <td>${item.name}</td>
                                 <td>${item.quantity}</td>
-                                <td>${item.price_per_item.toLocaleString('id-ID')}</td>
-                                <td>${lineDiscount.toLocaleString('id-ID')}</td>
-                                <td>${lineNet.toLocaleString('id-ID')}</td>
+                                <td>Rp ${formatCurrency(item.price_per_item)}</td>
+                                <td>${discountDisplay}</td>
+                                <td>Rp ${formatCurrency(lineNet)}</td>
                             </tr>
                 `;
             });
@@ -141,9 +146,9 @@ export default function SalesHistory() {
             receiptContent += `
                         </tbody>
                     </table>
-                    <p style="text-align:right; margin-top:10px;">Subtotal (Kotor): Rp ${grossSubtotal.toLocaleString('id-ID')}</p>
-                    <p style="text-align:right; margin:0;">Diskon Item: - Rp ${itemDiscountTotal.toLocaleString('id-ID')}</p>
-                    <p style="text-align:right; margin:0;">Subtotal (Bersih): Rp ${subtotalAmount.toLocaleString('id-ID')}</p>
+                    <p style="text-align:right; margin-top:10px;">Subtotal (Kotor): Rp ${formatCurrency(grossSubtotal)}</p>
+                    <p style="text-align:right; margin:0;">Diskon Item: - Rp ${formatCurrency(itemDiscountTotal)}</p>
+                    <p style="text-align:right; margin:0;">Subtotal (Bersih): Rp ${formatCurrency(subtotalAmount)}</p>
                     <p style="text-align:right; margin:0;">Diskon Transaksi: ${saleDiscountDisplay}</p>
                     <div class="total">
                         Total: Rp ${selectedSale.total_amount.toLocaleString('id-ID')}
