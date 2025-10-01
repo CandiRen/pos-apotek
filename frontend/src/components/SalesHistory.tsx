@@ -1,10 +1,8 @@
 import { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
+import { formatCurrency } from '../utils/currency';
 
 const API_URL = 'http://localhost:3001/api';
-
-const formatCurrency = (value: number) =>
-    new Intl.NumberFormat('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(value);
 
 interface Sale {
     id: number;
@@ -151,7 +149,7 @@ export default function SalesHistory() {
                     <p style="text-align:right; margin:0;">Subtotal (Bersih): Rp ${formatCurrency(subtotalAmount)}</p>
                     <p style="text-align:right; margin:0;">Diskon Transaksi: ${saleDiscountDisplay}</p>
                     <div class="total">
-                        Total: Rp ${selectedSale.total_amount.toLocaleString('id-ID')}
+                        Total: Rp ${formatCurrency(selectedSale.total_amount)}
                     </div>
                     <div class="footer">
                         <p>------------------------------------</p>
@@ -203,30 +201,30 @@ export default function SalesHistory() {
                                             <tr key={index}>
                                                 <td>{item.name}</td>
                                                 <td>{item.quantity}</td>
-                                                <td>Rp {item.price_per_item.toLocaleString('id-ID')}</td>
-                                                <td>Rp {(item.discount_amount || 0).toLocaleString('id-ID')}</td>
-                                                <td>Rp {((item.quantity * item.price_per_item) - (item.discount_amount || 0)).toLocaleString('id-ID')}</td>
+                                                <td>Rp {formatCurrency(item.price_per_item)}</td>
+                                                <td>Rp {formatCurrency(item.discount_amount || 0)}</td>
+                                                <td>Rp {formatCurrency((item.quantity * item.price_per_item) - (item.discount_amount || 0))}</td>
                                             </tr>
                                         ))}
                                     </tbody>
                                 </table>
                                 <div className="d-flex justify-content-between mt-3">
                                     <span>Subtotal (Kotor)</span>
-                                    <span>Rp {grossSubtotalForSelectedSale.toLocaleString('id-ID')}</span>
+                                    <span>Rp {formatCurrency(grossSubtotalForSelectedSale)}</span>
                                 </div>
                                 <div className="d-flex justify-content-between text-danger">
                                     <span>Diskon Item</span>
-                                    <span>- Rp {itemDiscountForSelectedSale.toLocaleString('id-ID')}</span>
+                                    <span>- Rp {formatCurrency(itemDiscountForSelectedSale)}</span>
                                 </div>
                                 <div className="d-flex justify-content-between mt-1">
                                     <span>Subtotal (Bersih)</span>
-                                    <span>Rp {subtotalForSelectedSale.toLocaleString('id-ID')}</span>
+                                    <span>Rp {formatCurrency(subtotalForSelectedSale)}</span>
                                 </div>
                                 <div className="d-flex justify-content-between text-danger">
                                     <span>Diskon Transaksi</span>
-                                    <span>- Rp {discountForSelectedSale.toLocaleString('id-ID')}</span>
+                                    <span>- Rp {formatCurrency(discountForSelectedSale)}</span>
                                 </div>
-                                <h5 className="text-end mt-3">Total: Rp {selectedSale.total_amount.toLocaleString('id-ID')}</h5>
+                                <h5 className="text-end mt-3">Total: Rp {formatCurrency(selectedSale.total_amount)}</h5>
                             </div>
                             <div className="modal-footer">
                                 <button type="button" className="btn-secondary" onClick={() => setShowDetailModal(false)}>Tutup</button>
@@ -262,7 +260,7 @@ export default function SalesHistory() {
                                         <tr key={sale.id}>
                                             <td>#{sale.id}</td>
                                             <td>{new Date(sale.created_at).toLocaleString('id-ID')}</td>
-                                            <td>Rp {sale.total_amount.toLocaleString('id-ID')}</td>
+                                            <td>Rp {formatCurrency(sale.total_amount)}</td>
                                             <td>{sale.payment_method}</td>
                                             <td>
                                                 <button className="btn btn-sm btn-info" onClick={() => handleShowDetails(sale.id)}>Lihat Detail</button>

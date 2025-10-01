@@ -11,6 +11,7 @@ import {
 import { Bar } from 'react-chartjs-2';
 import { useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api'; // Ganti import
+import { formatCurrency } from '../utils/currency';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
@@ -109,7 +110,7 @@ export default function Dashboard() {
                         <div className="card-body d-flex justify-content-between align-items-center">
                             <div>
                                 <h5 className="card-title">Penjualan Hari Ini</h5>
-                                <h2>Rp {summary.today_sales.toLocaleString('id-ID')}</h2>
+                                <h2>Rp {formatCurrency(summary.today_sales)}</h2>
                             </div>
                             <i className="bi bi-currency-dollar icon-large"></i>
                         </div>
@@ -190,7 +191,7 @@ export default function Dashboard() {
                                                 <tr key={sale.id}>
                                                     <td>#{sale.id}</td>
                                                     <td>{new Date(sale.created_at).toLocaleTimeString('id-ID')}</td>
-                                                    <td>Rp {sale.total_amount.toLocaleString('id-ID')}</td>
+                                                    <td>Rp {formatCurrency(sale.total_amount)}</td>
                                                     <td>{sale.payment_method}</td>
                                                 </tr>
                                             ))}

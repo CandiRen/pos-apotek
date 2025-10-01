@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { FormEvent, ChangeEvent } from 'react';
 import { apiFetch } from '../api'; // Ganti import fetch standar
+import { formatCurrency } from '../utils/currency';
 
 const API_URL = 'http://localhost:3001/api';
 
@@ -369,7 +370,7 @@ export default function ProductManagement() {
                             <td>{row.sku}</td>
                             <td>{row.category}</td>
                             <td>{row.stock_quantity}</td>
-                            <td>Rp {Number(row.price || 0).toLocaleString('id-ID')}</td>
+                            <td>Rp {formatCurrency(Number(row.price || 0))}</td>
                             <td>{row.expiry_date}</td>
                             <td>{row.supplier}</td>
                           </tr>
@@ -443,7 +444,7 @@ export default function ProductManagement() {
                       <td>{product.sku}</td>
                       <td>{product.category}</td>
                       <td>{product.stock_quantity}</td>
-                      <td>Rp {product.price.toLocaleString('id-ID')}</td>
+                      <td>Rp {formatCurrency(product.price)}</td>
                       <td>{product.expiry_date}</td>
                       <td>
                         <button className="btn btn-sm btn-primary me-2" onClick={() => handleEdit(product)}>Edit</button>

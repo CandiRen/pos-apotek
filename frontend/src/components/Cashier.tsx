@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import type { ChangeEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api'; // Ganti import
+import { formatCurrency } from '../utils/currency';
 
 const API_URL = 'http://localhost:3001/api';
 
@@ -74,9 +75,6 @@ const currencyClamp = (value: number, max: number) => {
   if (value > max) return max;
   return value;
 };
-
-const formatCurrency = (value: number) =>
-  new Intl.NumberFormat('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(value);
 
 const calculateBestPromotion = (
   item: { product_id: number; quantity: number; price_per_item: number },
@@ -604,7 +602,7 @@ export default function Cashier() {
                 <p style="text-align:right; margin:0;">Subtotal (Bersih): Rp ${formatCurrency(subtotalAmount)}</p>
                 <p style="text-align:right; margin:0;">Diskon Transaksi: ${saleDiscountDisplay}</p>
                 <div class="total">
-                    Total: Rp ${sale.total_amount.toLocaleString('id-ID')}
+                    Total: Rp ${formatCurrency(sale.total_amount)}
                 </div>
                 <div class="footer">
                     <p>------------------------------------</p>
@@ -641,7 +639,7 @@ export default function Cashier() {
                     products.slice(0, 10).map(product => (
                         <button key={product.id} type="button" className="list-group-item list-group-item-action d-flex justify-content-between align-items-center" onClick={() => addToCart(product)} disabled={product.stock_quantity <= 0}>
                             <div><h6 className="mb-1">{product.name}</h6><small>Stok: {product.stock_quantity}</small></div>
-                            <span className="fw-bold">Rp {product.price.toLocaleString('id-ID')}</span>
+                            <span className="fw-bold">Rp {formatCurrency(product.price)}</span>
                         </button>
                     ))
                 ) : (
@@ -668,7 +666,7 @@ export default function Cashier() {
                         <div className="d-flex justify-content-between align-items-start">
                           <div className="me-3 flex-grow-1">
                             <h6 className="my-0">{item.name}</h6>
-                            <small className="text-muted">Harga: Rp {item.price_per_item.toLocaleString('id-ID')}</small><br />
+                            <small className="text-muted">Harga: Rp {formatCurrency(item.price_per_item)}</small><br />
                             <small className="text-muted">Qty: {item.quantity}</small>
                             {item.applied_promotion_name && !item.is_manual_discount && (
                               <div className="text-success small mt-1">Promo: {item.applied_promotion_name}</div>
@@ -678,11 +676,11 @@ export default function Cashier() {
                             )}
                           </div>
                           <div className="text-end">
-                            <span className="text-muted d-block">Subtotal: Rp {lineGross.toLocaleString('id-ID')}</span>
+                            <span className="text-muted d-block">Subtotal: Rp {formatCurrency(lineGross)}</span>
                             {item.discount_amount > 0 && (
-                              <span className="text-danger d-block">Diskon: Rp {item.discount_amount.toLocaleString('id-ID')}</span>
+                              <span className="text-danger d-block">Diskon: Rp {formatCurrency(item.discount_amount)}</span>
                             )}
-                            <strong>Rp {lineNet.toLocaleString('id-ID')}</strong>
+                            <strong>Rp {formatCurrency(lineNet)}</strong>
                           </div>
                         </div>
                         <div className="mt-2 d-flex justify-content-end gap-2">
@@ -705,15 +703,15 @@ export default function Cashier() {
                 {isLoadingPromotions && <small className="text-muted d-block mb-2">Memuat promo aktif...</small>}
                 <div className="d-flex justify-content-between align-items-center mb-1">
                   <span>Subtotal (Kotor)</span>
-                  <strong>Rp {grossSubtotal.toLocaleString('id-ID')}</strong>
+                  <strong>Rp {formatCurrency(grossSubtotal)}</strong>
                 </div>
                 <div className="d-flex justify-content-between text-danger mb-1">
                   <span>Diskon Item</span>
-                  <span>- Rp {itemDiscountTotal.toLocaleString('id-ID')}</span>
+                  <span>- Rp {formatCurrency(itemDiscountTotal)}</span>
                 </div>
                 <div className="d-flex justify-content-between align-items-center mb-3">
                   <span>Subtotal (Bersih)</span>
-                  <strong>Rp {netSubtotal.toLocaleString('id-ID')}</strong>
+                  <strong>Rp {formatCurrency(netSubtotal)}</strong>
                 </div>
                 <div className="mb-3">
                   <label className="form-label">Diskon Transaksi</label>
@@ -733,9 +731,9 @@ export default function Cashier() {
                     />
                     <span className="input-group-text">{saleDiscountType === 'percent' ? '%' : 'Rp'}</span>
                   </div>
-                  <small className="text-muted">Diskon terhitung: Rp {saleDiscountAmount.toLocaleString('id-ID')}</small>
+                  <small className="text-muted">Diskon terhitung: Rp {formatCurrency(saleDiscountAmount)}</small>
                 </div>
-                <h4 className="d-flex justify-content-between align-items-center mb-3"><span>Total</span><strong>Rp {total.toLocaleString('id-ID')}</strong></h4>
+                <h4 className="d-flex justify-content-between align-items-center mb-3"><span>Total</span><strong>Rp {formatCurrency(total)}</strong></h4>
                 <button className="btn btn-primary btn-lg w-100" onClick={completeTransaction} disabled={cart.length === 0 || netSubtotal <= 0}>Selesaikan Transaksi</button>
               </div>
             </div>
@@ -769,30 +767,30 @@ export default function Cashier() {
                       <tr key={index}>
                         <td>{item.name}</td>
                         <td>{item.quantity}</td>
-                        <td>Rp {item.price_per_item.toLocaleString('id-ID')}</td>
-                        <td>Rp {item.discount_amount.toLocaleString('id-ID')}</td>
-                        <td>Rp {((item.quantity * item.price_per_item) - item.discount_amount).toLocaleString('id-ID')}</td>
+                        <td>Rp {formatCurrency(item.price_per_item)}</td>
+                        <td>Rp {formatCurrency(item.discount_amount)}</td>
+                        <td>Rp {formatCurrency((item.quantity * item.price_per_item) - item.discount_amount)}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
                 <div className="d-flex justify-content-between mt-3">
                   <span>Subtotal (Kotor)</span>
-                  <span>Rp {grossSubtotal.toLocaleString('id-ID')}</span>
+                  <span>Rp {formatCurrency(grossSubtotal)}</span>
                 </div>
                 <div className="d-flex justify-content-between text-danger">
                   <span>Diskon Item</span>
-                  <span>- Rp {itemDiscountTotal.toLocaleString('id-ID')}</span>
+                  <span>- Rp {formatCurrency(itemDiscountTotal)}</span>
                 </div>
                 <div className="d-flex justify-content-between mt-1">
                   <span>Subtotal (Bersih)</span>
-                  <span>Rp {netSubtotal.toLocaleString('id-ID')}</span>
+                  <span>Rp {formatCurrency(netSubtotal)}</span>
                 </div>
                 <div className="d-flex justify-content-between text-danger">
                   <span>Diskon Transaksi</span>
-                  <span>- Rp {saleDiscountAmount.toLocaleString('id-ID')}</span>
+                  <span>- Rp {formatCurrency(saleDiscountAmount)}</span>
                 </div>
-                <h5 className="text-end mt-3">Total Pembelian: Rp {total.toLocaleString('id-ID')}</h5>
+                <h5 className="text-end mt-3">Total Pembelian: Rp {formatCurrency(total)}</h5>
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowConfirmModal(false)}>Batal</button>
@@ -855,13 +853,13 @@ export default function Cashier() {
                     value={editForm.discount}
                     onChange={e => handleEditDiscountChange(Number(e.target.value))}
                   />
-                  <small className="text-muted">Maksimal diskon: Rp {editForm.maxDiscount.toLocaleString('id-ID')}</small>
+                  <small className="text-muted">Maksimal diskon: Rp {formatCurrency(editForm.maxDiscount)}</small>
                 </div>
                 <div className="mb-3">
                   <label className="form-label">Promo Tersedia</label>
                   {editForm.recommendedDiscount > 0 ? (
                     <div>
-                      <p className="mb-2">{editForm.recommendedPromotionName ?? 'Promo aktif'} memberikan potongan Rp {editForm.recommendedDiscount.toLocaleString('id-ID')}.</p>
+                      <p className="mb-2">{editForm.recommendedPromotionName ?? 'Promo aktif'} memberikan potongan Rp {formatCurrency(editForm.recommendedDiscount)}.</p>
                       <button type="button" className="btn btn-sm btn-outline-success" onClick={handleApplyPromotionInEdit}>Gunakan Promo</button>
                     </div>
                   ) : (
