@@ -1,4 +1,3 @@
-
 # Apotek POS - Sistem Point of Sale Apotek
 
 Selamat datang di Apotek POS, sebuah aplikasi web Point of Sale (POS) lengkap yang dirancang khusus untuk kebutuhan apotek. Aplikasi ini dibangun dengan arsitektur modern yang memisahkan antara backend dan frontend, memberikan skalabilitas dan kemudahan pengembangan.
@@ -87,6 +86,15 @@ npm run dev
 ```
 
 Biarkan terminal kedua ini juga tetap berjalan.
+
+### Cara Mudah (Linux/macOS)
+
+Sebagai alternatif, Anda dapat menggunakan skrip `start-dev.sh` dari direktori root untuk menginstal dependensi dan menjalankan kedua server secara otomatis.
+
+```bash
+# Dari direktori root proyek
+./start-dev.sh
+```
 
 ---
 
